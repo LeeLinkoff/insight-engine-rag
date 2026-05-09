@@ -1,0 +1,29 @@
+{
+  "name": "rag-demo",
+  "version": "1.0.0",
+  "description": "Minimal in-memory RAG server with source highlighting proxy",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "rag",
+    "openai",
+    "embeddings",
+    "highlighting",
+    "proxy",
+    "vector-search"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.12.2",
+    "cheerio": "^1.1.2",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^4.21.2",
+    "openai": "^6.2.0"
+  }
+}
