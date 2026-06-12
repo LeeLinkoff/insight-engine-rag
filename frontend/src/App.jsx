@@ -32,6 +32,61 @@ async function fetchWithRetry(url, options = {}, retries = 5, delayMs = 3000) {
   }
 }
 
+
+// Converts low-level backend or OpenAI errors into
+// messages that are understandable to non-technical users.
+//
+// Examples:
+//   "401 Incorrect API key provided..." -> "The AI service could not start because the server configuration is invalid."
+//
+// The original error is preserved in the Details section for troubleshooting.
+//
+function friendlyError(raw, fallback = 'Something went wrong.') {
+  const text = String(raw || fallback)
+  const lower = text.toLowerCase()
+
+  let message = fallback
+
+  // Invalid or expired OpenAI API key.
+  if (lower.includes('incorrect api key') || lower.includes('401')) {
+    message =
+      'The AI service could not start because the server API key is invalid or has expired. Please update the server configuration and try again.'
+  }
+
+  // Request timeout.
+  else if (lower.includes('timeout')) {
+    message =
+      'The request took too long to complete. Please try again in a few moments.'
+  }
+
+  // Backend unavailable.
+  else if (lower.includes('no response')) {
+    message =
+      'The server did not return a response. The backend may be unavailable.'
+  }
+
+  return {
+    title: 'Unable to load content',
+    message,
+
+    // Prevent accidental display of API keys or other secrets.
+    details: text.replace(
+      /sk-[A-Za-z0-9_*.-]+/g,
+      '[API key hidden]'
+    )
+  }
+}
+
+/**
+ * Opens the user-friendly error dialog and resets
+ * the Details section to collapsed.
+ */
+function showFriendlyError(raw, fallback) {
+  setShowErrorDetails(false)
+  setErrorDialog(friendlyError(raw, fallback))
+}
+
+
 export default function App() {
 
   // ── Shared state ──────────────────────────────────────────────────────────
@@ -50,6 +105,10 @@ export default function App() {
   const [sources, setSources] = useState([])             // Ranked source chunks that backed the answer
   const [health, setHealth] = useState(null)             // Raw health check payload from the backend
   const [healthDialogOpen, setHealthDialogOpen] = useState(false)
+
+  // ── Error Dialog State ──────────────────────────────────────────────────────
+  const [errorDialog, setErrorDialog] = useState(null)   // Current error dialog contents; null when no error dialog is displayed
+  const [showErrorDetails, setShowErrorDetails] = useState(false) // Shows/hides low-level technical error details
 
   // Builds the highlight proxy URL for a given source URL and query string.
   // The proxy fetches the original page server-side, injects the highlighter script,
@@ -92,7 +151,13 @@ export default function App() {
       if (!text) { setStatus('Load failed: no response from server. Is the backend running?'); return }
       let j
       try { j = JSON.parse(text) } catch { setStatus('Load failed: invalid response from server'); return }
-      if (!j.ok) { setStatus(`Load failed: ${j.error || 'unknown error'}`); return }
+      if (!j.ok)
+	  {
+		showFriendlyError(j.error || 'unknown error', 'The page could not be loaded.')
+		setStatus('Load failed')
+		return
+	  }
+	 
       setIngested(true)
       setStatus(`Page loaded successfully — ${j.chunks_added} section${j.chunks_added !== 1 ? 's' : ''} indexed`)
     } catch (e) { setStatus(`Ingest error: ${e?.message || e}`) }
@@ -109,7 +174,10 @@ export default function App() {
       const j = await r.json()
       setHealth(j)
       setHealthDialogOpen(true)
-    } catch (e) { setStatus(`System check error: ${e?.message || e}`) }
+    } catch (e) {
+	  showFriendlyError(e?.message || e, 'The page could not be loaded.')
+	  setStatus('Load failed')
+	}
   }
 
   // ── RAG Query ─────────────────────────────────────────────────────────────
@@ -132,11 +200,18 @@ export default function App() {
       if (!text) { setStatus('Search failed: no response from server. Is the backend running?'); return }
       let j
       try { j = JSON.parse(text) } catch { setStatus('Search failed: invalid response from server'); return }
-      if (!j.ok) { setStatus(`Search failed: ${j.error || 'unknown error'}`); return }
+      if (!j.ok) {
+		showFriendlyError(j.error || 'unknown error', 'The question could not be answered.')
+		setStatus('Search failed')
+		return
+	  }
       const cleaned = (j.answer || '').replace(/\[\d+\|[^\]]*\]/g, '').trim()
       setAnswer(cleaned); setSources(Array.isArray(j.sources) ? j.sources : [])
       setStatus('Results ready')
-    } catch (e) { setStatus(`Query error: ${e?.message || e}`) }
+    } catch (e) {
+	  showFriendlyError(e?.message || e,'The question could not be answered.')
+	  setStatus('Search failed')
+	}
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -365,6 +440,34 @@ export default function App() {
         </Dialog.Portal>
       </Dialog.Root>
 
+      {/* ── Error Dialog ──────────────────────────────────────────────────────
+          Displays user-friendly error messages while keeping technical
+          details available for troubleshooting when needed. */}
+      <Dialog.Root open={!!errorDialog} onOpenChange={(open) => {if (!open) setErrorDialog(null)}}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="dialog-overlay" />
+          <Dialog.Content className="dialog-content">
+            <Dialog.Title className="dialog-title">
+              {errorDialog?.title}
+            </Dialog.Title>
+            <Dialog.Description className="dialog-description">
+              {errorDialog?.message}
+            </Dialog.Description>
+            <button className="btn-secondary dialog-details-toggle" onClick={() => setShowErrorDetails(v => !v)}>
+              {showErrorDetails ? 'Hide Details' : 'Details'}
+            </button>
+            {showErrorDetails && (
+              <pre className="dialog-error-details">
+                {errorDialog?.details}
+              </pre>
+            )}
+            <Dialog.Close className="btn-primary dialog-close">
+              OK
+            </Dialog.Close>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+	  
     </div>
   )
 }

@@ -389,3 +389,22 @@ label {
   border-radius: 0 0 8px 8px;
   background: #ffffff;
 }
+
+.dialog-details-toggle {
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.dialog-error-details {
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px;
+  margin: 0 0 16px 0;
+  font-size: 12px;
+  color: #374151;
+}
