@@ -33,58 +33,7 @@ async function fetchWithRetry(url, options = {}, retries = 5, delayMs = 3000) {
 }
 
 
-// Converts low-level backend or OpenAI errors into
-// messages that are understandable to non-technical users.
-//
-// Examples:
-//   "401 Incorrect API key provided..." -> "The AI service could not start because the server configuration is invalid."
-//
-// The original error is preserved in the Details section for troubleshooting.
-//
-function friendlyError(raw, fallback = 'Something went wrong.') {
-  const text = String(raw || fallback)
-  const lower = text.toLowerCase()
 
-  let message = fallback
-
-  // Invalid or expired OpenAI API key.
-  if (lower.includes('incorrect api key') || lower.includes('401')) {
-    message =
-      'The AI service could not start because the server API key is invalid or has expired. Please update the server configuration and try again.'
-  }
-
-  // Request timeout.
-  else if (lower.includes('timeout')) {
-    message =
-      'The request took too long to complete. Please try again in a few moments.'
-  }
-
-  // Backend unavailable.
-  else if (lower.includes('no response')) {
-    message =
-      'The server did not return a response. The backend may be unavailable.'
-  }
-
-  return {
-    title: 'Unable to load content',
-    message,
-
-    // Prevent accidental display of API keys or other secrets.
-    details: text.replace(
-      /sk-[A-Za-z0-9_*.-]+/g,
-      '[API key hidden]'
-    )
-  }
-}
-
-/**
- * Opens the user-friendly error dialog and resets
- * the Details section to collapsed.
- */
-function showFriendlyError(raw, fallback) {
-  setShowErrorDetails(false)
-  setErrorDialog(friendlyError(raw, fallback))
-}
 
 
 export default function App() {
@@ -116,6 +65,59 @@ export default function App() {
   // This sidesteps CORS and CSP restrictions that would block a direct iframe embed.
   const prox = (u, query) =>
     `${API_BASE}/api/highlight-proxy?url=${encodeURIComponent(u)}&q=${encodeURIComponent(query)}`
+
+	// Converts low-level backend or OpenAI errors into
+	// messages that are understandable to non-technical users.
+	//
+	// Examples:
+	//   "401 Incorrect API key provided..." -> "The AI service could not start because the server configuration is invalid."
+	//
+	// The original error is preserved in the Details section for troubleshooting.
+	//
+	function friendlyError(raw, fallback = 'Something went wrong.') {
+	  const text = String(raw || fallback)
+	  const lower = text.toLowerCase()
+
+	  let message = fallback
+
+	  // Invalid or expired OpenAI API key.
+	  if (lower.includes('incorrect api key') || lower.includes('401')) {
+		message =
+		  'The AI service could not start because the server API key is invalid or has expired. Please update the server configuration and try again.'
+	  }
+
+	  // Request timeout.
+	  else if (lower.includes('timeout')) {
+		message =
+		  'The request took too long to complete. Please try again in a few moments.'
+	  }
+
+	  // Backend unavailable.
+	  else if (lower.includes('no response')) {
+		message =
+		  'The server did not return a response. The backend may be unavailable.'
+	  }
+
+	  return {
+		title: 'Unable to load content',
+		message,
+
+		// Prevent accidental display of API keys or other secrets.
+		details: text.replace(
+		  /sk-[A-Za-z0-9_*.-]+/g,
+		  '[API key hidden]'
+		)
+	  }
+	}
+
+	/**
+	 * Opens the user-friendly error dialog and resets
+	 * the Details section to collapsed.
+	 */
+	function showFriendlyError(raw, fallback) {
+	  setShowErrorDetails(false)
+	  setErrorDialog(friendlyError(raw, fallback))
+	}
 
   // Gives buttons a brief dark flash on click for tactile feedback.
   // Purely cosmetic — makes the UI feel snappy and responsive.

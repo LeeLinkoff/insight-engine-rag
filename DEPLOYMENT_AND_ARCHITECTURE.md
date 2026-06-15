@@ -54,7 +54,9 @@ Run these once at the start of every SSH session before doing anything else.
 
 Replace the path with wherever you uploaded the repo on the VPS:
 
-    PROJECT=/opt/rag
+    export PROJECT=/opt/rag
+
+**Must use `export`.** Plain `PROJECT=/opt/rag` works only in the current shell and breaks subprocesses. `set PROJECT=/opt/rag` is csh/tcsh syntax and does nothing in bash. Commands will fail with silent path errors.
 
 All commands in this document use `$PROJECT` so nothing else needs to change.
 
@@ -95,7 +97,7 @@ Open in a browser:
 
     https://leelinkoff.com/mvps/rag/
 
-The UI should load. If it appears blank or broken, check that `vite.config.js` has the correct base path (see Section 1.6).
+The UI should load. If it appears blank or broken, check that `vite.config.js` has the correct base path (see Section 1.7).
 
 ---
 
@@ -131,7 +133,35 @@ Must return the same JSON as above. If this fails but the direct curl in Step 2 
 
 ---
 
-## 1.6 IMPORTANT: Vite Base Path
+## 1.6 Rotating the OpenAI API Key
+
+When the API key changes, the running container must be replaced. The image does not need to be rebuilt. Only the container needs to restart, because the key is injected at `docker run` time via `--env-file`, not baked into the image.
+
+### Step 1: Edit the .env file
+
+    nano /opt/rag/backend/.env
+
+Update the `OPENAI_API_KEY` line. Save and exit (`Ctrl+O`, `Enter`, `Ctrl+X`).
+
+### Step 2: Restart the container with the new key
+
+    docker rm -f rag-backend
+    docker run -d \
+      --name rag-backend \
+      --restart unless-stopped \
+      -p 3001:3001 \
+      --env-file /opt/rag/backend/.env \
+      rag-backend
+
+### Step 3: Verify
+
+    curl http://127.0.0.1:3001/api/health
+
+Must return `{"ok":true,"chunks":0,"sources":{}}`. If it does, the container is up and using the new key.
+
+---
+
+## 1.7 IMPORTANT: Vite Base Path
 
 When the frontend is not served from the root of the domain, the following must be set in `vite.config.js`:
 
@@ -202,6 +232,8 @@ The backend is a Node.js/Express server that runs exclusively inside Docker. The
 `--omit=dev` excludes devDependencies from the production image, keeping it lean.
 
 ### .env
+
+**Location on VPS: `/opt/rag/backend/.env`**
 
     OPENAI_API_KEY=...
     PORT=3001
