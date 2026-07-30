@@ -1,0 +1,158 @@
+name: Deploy to VPS
+
+# Two-stage deploy: verify first, deploy second, deploy only runs if
+# verify passes. Nothing gets synced to the VPS unless it's already
+# confirmed to build cleanly on GitHub's own disposable runner.
+#
+#   1. verify-build — runs entirely on the GitHub runner, touches the
+#      VPS not at all:
+#        - backend: node --check (syntax) + npx tsc --noEmit (types)
+#        - frontend: npm run build (the real compile step — this is
+#          the one most likely to catch a real error: bad imports,
+#          JSX syntax issues, missing deps, etc.)
+#      If any of this fails, the workflow stops here. Nothing touches
+#      the VPS.
+#
+#   2. deploy — only runs if verify-build succeeded. Mirrors the manual
+#      process in DEPLOYMENT_AND_ARCHITECTURE.md exactly:
+#        - rsync source (not the build output) to the VPS
+#        - rebuild + restart the backend Docker container
+#        - build the frontend AGAIN, but this time inside a throwaway
+#          Docker container on the VPS itself (per your "build it on
+#          there" — the VPS host Node is broken, so the real production
+#          build has to happen in a container, same as the documented
+#          manual process). The GitHub-runner build in step 1 was only
+#          ever a fast pre-flight check, its output is discarded.
+#        - rsync the VPS-built dist/ into Apache's static directory
+#        - verify /api/health responds through the public domain
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   VPS_HOST          e.g. 162.214.120.12
+#   VPS_USER          e.g. root
+#   VPS_SSH_KEY        private key with SSH access to the VPS (see note below)
+#   VPS_PROJECT_PATH   e.g. /opt/rag
+#   PUBLIC_HEALTH_URL  e.g. https://leelinkoff.com/api/health
+#
+# SSH key setup note: authenticate with a dedicated SSH keypair, NOT the
+# root password from your credentials file. Generate one locally
+# (ssh-keygen -t ed25519 -f deploy_key -N ""), add deploy_key.pub to the
+# VPS's /root/.ssh/authorized_keys, and paste the PRIVATE key (deploy_key,
+# no .pub) into the VPS_SSH_KEY secret. Never put a plaintext password in
+# a GitHub secret for SSH auth — keys are revocable per-use, passwords aren't.
+
+"on":
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  verify-build:
+    name: Verify build (GitHub runner, no VPS involved)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Backend — syntax check
+        working-directory: backend
+        run: node --check server.js
+
+      - name: Backend — install deps
+        working-directory: backend
+        run: npm install
+
+      - name: Backend — type check (strict)
+        working-directory: backend
+        run: npx tsc --noEmit
+
+      - name: Frontend — install deps
+        working-directory: frontend
+        run: npm install
+
+      - name: Frontend — production build
+        working-directory: frontend
+        run: npm run build
+
+  deploy:
+    name: Deploy backend + frontend to VPS
+    runs-on: ubuntu-latest
+    needs: [verify-build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+
+      - name: Add VPS to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Sync source files to VPS
+        # Excludes node_modules, dist, and .env — same exclusions called
+        # out manually in DEPLOYMENT_AND_ARCHITECTURE.md section 1.2.
+        # .env is intentionally never overwritten by CI; it's managed by
+        # hand on the VPS per section 1.6 (API key rotation).
+        run: |
+          rsync -az --delete \
+            --exclude 'node_modules' \
+            --exclude 'dist' \
+            --exclude '.env' \
+            --exclude '.git' \
+            ./backend/ "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_PROJECT_PATH }}/backend/"
+          rsync -az --delete \
+            --exclude 'node_modules' \
+            --exclude 'dist' \
+            --exclude '.git' \
+            ./frontend/ "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_PROJECT_PATH }}/frontend/"
+
+      - name: Rebuild and restart backend container
+        run: |
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" '
+            set -e
+            cd "${{ secrets.VPS_PROJECT_PATH }}/backend"
+            docker build -t rag-backend .
+            docker rm -f rag-backend || true
+            docker run -d \
+              --name rag-backend \
+              --restart unless-stopped \
+              -p 3001:3001 \
+              --env-file .env \
+              rag-backend
+          '
+
+      - name: Build frontend in a throwaway Docker container (on the VPS)
+        run: |
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" '
+            set -e
+            docker run --rm \
+              -v "${{ secrets.VPS_PROJECT_PATH }}/frontend:/app" \
+              -w /app \
+              node:20-alpine sh -c "npm install && npm run build"
+          '
+
+      - name: Deploy built frontend to Apache static directory
+        run: |
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" '
+            set -e
+            rsync -a --delete \
+              "${{ secrets.VPS_PROJECT_PATH }}/frontend/dist/" \
+              /home/leelinko/public_html/mvps/rag/
+          '
+
+      - name: Verify backend health through the public domain
+        run: |
+          for i in $(seq 1 10); do
+            if curl -sf "${{ secrets.PUBLIC_HEALTH_URL }}" > /dev/null; then
+              echo "Deployment verified healthy."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Health check failed after deployment."
+          exit 1

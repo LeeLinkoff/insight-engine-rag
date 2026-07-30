@@ -44,5 +44,12 @@ frontend/.vite/
 # ── Test / coverage output ───────────────────────────────────
 coverage/
 
+# ── SSH deploy keys (never commit private keys) ──────────────
+deploy_key
+deploy_key.pub
+*.pem
+id_ed25519*
+id_rsa*
+
 # ── Windows batch scripts (local dev helpers, not part of the repo) ──
 *.bat
