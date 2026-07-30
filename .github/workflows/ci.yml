@@ -1,4 +1,4 @@
-name: Backend Tests and Type Checks
+name: CI
 
 # Runs on every push and pull request against main.
 #
@@ -34,6 +34,9 @@ jobs:
   syntax-check:
     name: Syntax check (JS)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - uses: actions/checkout@v4
 
@@ -56,6 +59,9 @@ jobs:
   typecheck:
     name: Type check (TypeScript, strict)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - uses: actions/checkout@v4
 
@@ -72,10 +78,9 @@ jobs:
   eval-harness:
     name: Eval harness (live server)
     runs-on: ubuntu-latest
-    # Skip entirely if no OpenAI key is configured for this run (e.g. a
-    # fork PR, which never receives repo secrets). Prevents a hard, noisy
-    # failure for external contributors who can't have the secret anyway.
-    if: ${{ secrets.OPENAI_API_KEY != '' }}
+    defaults:
+      run:
+        working-directory: backend
     needs: [syntax-check, typecheck]
     steps:
       - uses: actions/checkout@v4
@@ -84,10 +89,33 @@ jobs:
         with:
           node-version: '20'
 
+      # GitHub Actions does not allow the `secrets` context in a job-level
+      # `if:` condition (it's simply not evaluable at that stage, this is
+      # a hard restriction, not a formatting issue). So the check happens
+      # here instead, inside a step, where `secrets` IS accessible, and
+      # the result is stored as a step output. Every step below that
+      # needs the real key is gated on that output instead of on
+      # `secrets` directly. This still fully skips the job's real work
+      # on forked PRs (which never receive secrets) without the whole
+      # job showing as skipped, individual steps just no-op.
+      - name: Check for OPENAI_API_KEY
+        id: check_key
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -n "$OPENAI_API_KEY" ]; then
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+            echo "No OPENAI_API_KEY secret available (e.g. a forked PR). Skipping the eval harness steps below."
+          fi
+
       - name: Install dependencies
+        if: steps.check_key.outputs.has_key == 'true'
         run: npm install
 
       - name: Start server in background
+        if: steps.check_key.outputs.has_key == 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           PORT: 3001
@@ -96,6 +124,7 @@ jobs:
           echo $! > server.pid
 
       - name: Wait for server to become healthy
+        if: steps.check_key.outputs.has_key == 'true'
         run: |
           for i in $(seq 1 20); do
             if curl -sf http://127.0.0.1:3001/api/health > /dev/null; then
@@ -109,14 +138,15 @@ jobs:
           exit 1
 
       - name: Run eval harness
+        if: steps.check_key.outputs.has_key == 'true'
         env:
           EVAL_BASE_URL: http://127.0.0.1:3001
         run: node evals.js
 
       - name: Show server log on failure
-        if: failure()
+        if: failure() && steps.check_key.outputs.has_key == 'true'
         run: cat server.log
 
       - name: Stop server
-        if: always()
+        if: always() && steps.check_key.outputs.has_key == 'true'
         run: kill "$(cat server.pid)" 2>/dev/null || true
