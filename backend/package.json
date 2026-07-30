@@ -24,6 +24,7 @@
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
-    "openai": "^6.2.0"
+    "openai": "^6.2.0",
+    "swagger-ui-express": "^5.0.1"
   }
 }

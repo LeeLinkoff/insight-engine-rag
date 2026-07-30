@@ -1,0 +1,122 @@
+name: CI
+
+# Runs on every push and pull request against main.
+#
+# Three jobs, in increasing order of what they actually require:
+#   1. syntax-check   — plain JS files parse cleanly (node --check). No
+#                        dependencies, no secrets, always runs.
+#   2. typecheck       — the TypeScript versions (server.ts, evals.ts,
+#                        highlight-safe.ts, swagger-spec.ts) compile clean
+#                        under strict mode (npx tsc --noEmit). No secrets
+#                        needed, this is a pure static check.
+#   3. eval-harness     — boots the real server and runs evals.js against
+#                        it end to end. Requires OPENAI_API_KEY as a repo
+#                        secret, so it's skipped automatically on forked
+#                        PRs (which never receive secrets) rather than
+#                        failing loudly for external contributors.
+#
+# NOTE ON JOB 3: evals.js currently ships with placeholder test cases
+# (see TEST_CASES in evals.js — one entry still has expected_source_ids:
+# ['REPLACE_WITH_REAL_SOURCE_ID']). This job will run and report PASS/FAIL
+# against whatever is actually configured, but it is not yet a meaningful
+# regression gate until real test cases with real ingested content are
+# filled in. Documenting that honestly here rather than pretending this
+# job blocks bad merges today — right now it mostly proves the endpoint
+# is reachable and returns well-formed responses.
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  syntax-check:
+    name: Syntax check (JS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check server.js parses
+        run: node --check server.js
+
+      - name: Check evals.js parses
+        run: node --check evals.js
+
+      - name: Check highlight-safe.js parses
+        run: node --check highlight-safe.js
+
+      - name: Check swagger-spec.js parses
+        run: node --check swagger-spec.js
+
+  typecheck:
+    name: Type check (TypeScript, strict)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: tsc --noEmit
+        run: npx tsc --noEmit
+
+  eval-harness:
+    name: Eval harness (live server)
+    runs-on: ubuntu-latest
+    # Skip entirely if no OpenAI key is configured for this run (e.g. a
+    # fork PR, which never receives repo secrets). Prevents a hard, noisy
+    # failure for external contributors who can't have the secret anyway.
+    if: ${{ secrets.OPENAI_API_KEY != '' }}
+    needs: [syntax-check, typecheck]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Start server in background
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PORT: 3001
+        run: |
+          nohup node server.js > server.log 2>&1 &
+          echo $! > server.pid
+
+      - name: Wait for server to become healthy
+        run: |
+          for i in $(seq 1 20); do
+            if curl -sf http://127.0.0.1:3001/api/health > /dev/null; then
+              echo "Server is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server did not become healthy in time"
+          cat server.log
+          exit 1
+
+      - name: Run eval harness
+        env:
+          EVAL_BASE_URL: http://127.0.0.1:3001
+        run: node evals.js
+
+      - name: Show server log on failure
+        if: failure()
+        run: cat server.log
+
+      - name: Stop server
+        if: always()
+        run: kill "$(cat server.pid)" 2>/dev/null || true

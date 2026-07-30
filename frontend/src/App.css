@@ -315,6 +315,120 @@ label {
   font-size: 14px;
 }
 
+/* ── Guardrail checks passed (positive confirmation, not a warning) ── */
+.rag-checks-passed {
+  margin-top: 10px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+  font-size: 12px;
+  display: inline-block;
+}
+
+/* ── Routing/config error (e.g. missing VITE_API_BASE) ── */
+.rag-routing-error {
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+.rag-routing-error-title {
+  font-weight: 800;
+  font-size: 15px;
+  color: #991b1b;
+  margin-bottom: 6px;
+}
+.rag-routing-error-message {
+  font-size: 14px;
+  color: #7f1d1d;
+  line-height: 1.55;
+}
+.rag-routing-error-details {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #7f1d1d;
+}
+.rag-routing-error-details summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+.rag-routing-error-details pre {
+  margin: 6px 0 0 0;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── Safety warning (moderation flagged, answer withheld) ── */
+.rag-safety-warning {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fef2f2;
+  border: 1.5px solid #fecaca;
+  color: #991b1b;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+/* ── Source diversity warning (answer grounded in a single source) ── */
+.rag-diversity-warning {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fffbeb;
+  border: 1.5px solid #fde68a;
+  color: #92400e;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ── How It Works dialog: instruction sections/steps ── */
+.rag-instruction-section {
+  margin-bottom: 18px;
+}
+.rag-instruction-section:last-child {
+  margin-bottom: 0;
+}
+
+.rag-instruction-step {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 10px;
+}
+
+.rag-instruction-num {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rag-instruction-title {
+  font-size: 13px;
+  font-weight: 750;
+  color: #111827;
+  margin-bottom: 2px;
+}
+
+.rag-instruction-body {
+  font-size: 13px;
+  color: #4b5563;
+  line-height: 1.55;
+}
+
 /* ── Section grid ── */
 .rag-grid {
   display: grid;
@@ -388,23 +502,4 @@ label {
   border-top: none;
   border-radius: 0 0 8px 8px;
   background: #ffffff;
-}
-
-.dialog-details-toggle {
-  width: 100%;
-  margin-bottom: 12px;
-}
-
-.dialog-error-details {
-  max-height: 180px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  background: #f3f4f6;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
-  padding: 12px;
-  margin: 0 0 16px 0;
-  font-size: 12px;
-  color: #374151;
 }

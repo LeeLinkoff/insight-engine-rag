@@ -23,6 +23,13 @@ Insight Engine lets you ingest any public web page and ask questions about it. T
 - GPT-4o-mini generates a concise answer strictly from that context, with bracket citations
 - If the answer is not supported by the retrieved content, the system says so explicitly rather than hallucinating
 
+### Safety & Bias Guardrails
+
+RAG systems fail in specific, known ways beyond simple hallucination. Insight Engine checks for the main ones explicitly rather than trusting the model's output by default:
+- Every generated answer is run through OpenAI's moderation endpoint before being returned; flagged answers are withheld rather than shown
+- Responses are flagged when an answer is grounded in a single source only, since one skewed or outdated document could otherwise appear as broadly confirmed
+- A standalone eval harness checks refusal correctness, citation correctness, and retrieval precision against a fixed test set, and can gate CI
+
 ### Source Highlighting Proxy
 
 This is the most innovative feature and solves a real trust problem with RAG systems.
@@ -30,6 +37,32 @@ This is the most innovative feature and solves a real trust problem with RAG sys
 Standard RAG products return an answer and a source URL. The user has no way to verify whether the answer is grounded without manually searching the original page.
 
 Insight Engine solves this with a server-side highlight proxy. After receiving an answer, the user can open any cited source in a proxy view that fetches the original HTML, injects a client-side token-matching script, and scrolls the browser directly to the relevant passage on the page. Verification becomes a one-click operation instead of a manual ctrl+F exercise.
+
+### Modular Frontend Architecture
+
+The React frontend is decomposed into focused, single-responsibility components rather than one large file. `App.jsx` owns all shared state (the target URL, query state, answer/source/safety results) and the three functions that talk to the backend (`ingestUrl`, `getHealth`, `runQuery`); every visual piece is a component that receives only the state and callbacks it needs as props, with no duplicated logic and no component reaching back up into a parent.
+
+```
+App.jsx
+├── AboutCard.jsx
+├── PageUrlCard.jsx
+├── RoutingErrorNotice.jsx      (shown if VITE_API_BASE is misconfigured, catching a whole class of broken-URL bugs)
+├── HighlighterTab.jsx
+├── AskQuestionTab.jsx
+│   ├── AnswerCard.jsx           (renders the safety and source-diversity warnings)
+│   ├── SourcesCard.jsx
+│   └── HighlightedPreviewCard.jsx
+├── SystemCheckDialog.jsx
+└── HowItWorksDialog.jsx
+    ├── InstructionSection.jsx
+    └── InstructionStep.jsx
+```
+
+Tabs and dialogs are built with Radix UI primitives (`@radix-ui/react-tabs`, `@radix-ui/react-dialog`) for accessible keyboard navigation and focus handling, with the visual styling layered on top in `App.css`.
+
+### API Documentation
+
+An interactive Swagger UI, generated from a static OpenAPI 3.0 spec (`swagger-spec.js`), is served at `/api/docs`. It documents every endpoint's request/response shape with realistic examples, and its top-level description surfaces the safety/bias guardrails up front rather than leaving them buried in a single endpoint's details.
 
 ### Production-Grade Backend
 - Full request lifecycle logging with timestamps
@@ -70,16 +103,30 @@ Cosine similarity is used rather than keyword matching because it operates on me
 
 The vector store lives in process memory by design. It is fast and requires no external infrastructure for an MVP. The trade-off is that content must be re-ingested after a container restart. Production hardening would persist embeddings to a dedicated vector database such as Pinecone or pgvector.
 
+## Known Issues Found & Fixed
+
+Both of these surfaced during real testing, not code review, and are documented here rather than quietly patched over:
+
+- **Source ID collision.** URLs sharing a long common prefix (e.g. two Wikipedia pages under `/wiki/`) were silently assigned identical internal source IDs, because the ID was a truncated base64 encoding of the URL that only captured the first 9 bytes. Two genuinely different ingested pages were merging into one source in the vector store without any error. Fixed by hashing the full URL (SHA-256) instead of truncating a prefix.
+- **Empty-chunk ingestion crash.** The chunking function could emit a whitespace-only chunk when a sentence ended right at the chunk-size boundary and was immediately followed by a long run of text with no period in it (common in citation/reference blocks). That empty string was rejected outright by OpenAI's embeddings API, crashing ingestion for the affected page. Fixed by guarding the chunk-flush condition against whitespace-only buffers and filtering any empty chunks that slip through regardless.
+
+## Continuous Integration & Deployment
+
+- **CI** (`.github/workflows/ci.yml`): on every push/PR, syntax-checks the JavaScript files, type-checks the TypeScript files under `strict: true`, and runs the eval harness against a live boot of the server (skipped on forked PRs, which never receive the required `OPENAI_API_KEY` secret).
+- **CD** (`.github/workflows/deploy.yml`): on push to `main`, first verifies the frontend actually builds cleanly on GitHub's own runner (fails fast, touches the VPS not at all), then only if that passes, syncs source to the VPS, rebuilds the backend container, rebuilds the frontend inside a throwaway Docker container on the VPS itself, deploys it to Apache, and verifies `/api/health` responds through the public domain. Deployment used to be a fully manual SSH process (still documented in `DEPLOYMENT_AND_ARCHITECTURE.md` for reference); it's automated now.
+
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Frontend | React, Vite |
+| Frontend | React, Vite, Radix UI (Tabs, Dialog) |
 | Backend | Node.js, Express |
 | Embeddings | OpenAI text-embedding-3-small |
 | Chat completion | OpenAI GPT-4o-mini |
 | HTML extraction | Cheerio |
 | HTTP client | Axios |
+| API documentation | Swagger UI (OpenAPI 3.0) |
+| CI/CD | GitHub Actions |
 | Containerization | Docker |
 | Web server | Apache with mod_proxy |
 | Deployment | Bluehost VPS |
@@ -87,6 +134,8 @@ The vector store lives in process memory by design. It is fast and requires no e
 ## Code Quality
 
 Every function, endpoint, and architectural decision is documented inline. The server.js opens with a full architectural overview covering endpoints, model choices, tradeoff analysis on the in-memory vector store, and production hardening guidance. New developers can orient themselves without asking a single question.
+
+Type-checked TypeScript versions of the backend (`server.ts`, `evals.ts`, `highlight-safe.ts`, `swagger-spec.ts`) are maintained alongside the JavaScript originals, compiling cleanly under `strict: true`. The frontend follows the same documentation discipline as the backend: each component file states not just what it renders but why it exists as a separate file (see `Modular Frontend Architecture` above).
 
 See `DEPLOYMENT_AND_ARCHITECTURE.md` for the full deployment guide including VPS environment constraints, Docker build process, Apache configuration, and security notes.
 

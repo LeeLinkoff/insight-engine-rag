@@ -1,7 +1,7 @@
-// server.js
+// server.ts
 
 /**
- * High-level overview: Minimal RAG + Highlight Proxy (server.js)
+ * High-level overview: Minimal RAG + Highlight Proxy (server.ts)
  *
  * What this service does
  * ----------------------
@@ -19,6 +19,8 @@
  *    - Response is constrained to cite from the given CONTEXT; if insufficient, it must say:
  *      "I'm not certain from the provided documents."
  *    - Returns both the final answer and a structured list of sources (with scores/snippets/links).
+ *    - Every answer is passed through OpenAI's moderation endpoint before being returned.
+ *    - Response also flags when an answer was grounded in a single source only.
  *
  * 3) Source highlighting (browser-visible):
  *    - /api/highlight-proxy fetches the original page HTML and injects a minimal highlighter script + CSS.
@@ -45,7 +47,8 @@
  * - POST /api/query
  *     body: { question: string, topK?: number(1..8) }
  *     flow: embed Q → cosine rank → topK → ChatCompletion with strict CONTEXT rules
- *     returns: { ok, answer, sources:[{idx,company,source_id,title,source_url,score,snippet,text_fragment_urls}] }
+ *           → moderation check → source diversity check
+ *     returns: { ok, answer, safety, source_diversity, sources:[{idx,company,source_id,title,source_url,score,snippet,text_fragment_urls}] }
  *
  * - GET  /api/highlight-proxy?url=<...>&q=<...>   (HTML)
  *     effect: serves proxied page with client-side highlighter applied to the query text
@@ -58,9 +61,6 @@
  *
  * - GET  /api/testpage   (HTML)
  *     deterministic local test page for highlighter verification
- *
- * - GET  /api/docs   (HTML)
- *     interactive Swagger UI documenting every endpoint above (see swagger-spec.js)
  *
  * Models + knobs
  * --------------
@@ -83,6 +83,7 @@
  *   to allow client-side highlighting. Use cautiously for untrusted pages.
  * - CORS enabled for UI dev; restrict in production.
  * - Rate limit + auth are not implemented here (add before exposing publicly).
+ * - Every generated answer is run through OpenAI moderation before being returned to the caller.
  *
  * Operational guidance
  * --------------------
@@ -103,33 +104,72 @@
  * -----
  * - Ingest: fetch → extract → chunk → embed → store in RAM
  * - Query : embed Q → cosine search → topK → ChatCompletion with strict CONTEXT + citations
+ *           → moderation check → source diversity flag
  * - Verify: open sources via highlight proxy to see the exact text on the page
  */
-
 
 'use strict';
 
 // ─── Dependencies ────────────────────────────────────────────────────────────
-// Load environment variables from .env (OPENAI_API_KEY, PORT)
-require('dotenv').config();
-const express = require('express');
-const cors    = require('cors');
-const axios   = require('axios');
-const cheerio = require('cheerio'); // Used for HTML parsing at ingest time ONLY — never in the highlight proxy
-const OpenAI  = require('openai');
-const path    = require('path');
-const crypto  = require('crypto');
-const swaggerUi   = require('swagger-ui-express');
-const swaggerSpec = require('./swagger-spec');
-const { injectHighlight } = require('./highlight-safe'); // Injects highlight script into raw proxied HTML
+import 'dotenv/config';
+import express, { Request, Response, NextFunction } from 'express';
+import cors from 'cors';
+import axios from 'axios';
+import * as cheerio from 'cheerio'; // Used for HTML parsing at ingest time ONLY — never in the highlight proxy
+import OpenAI from 'openai';
+import path from 'path';
+import crypto from 'crypto';
+import swaggerUi from 'swagger-ui-express';
+import swaggerSpec from './swagger-spec';
+import { injectHighlight } from './highlight-safe'; // Injects highlight script into raw proxied HTML
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface DocMeta {
+  title?: string | null;
+  company?: string | null;
+  source_url?: string | null;
+}
+
+interface StoredChunk {
+  id: string;
+  source_id: string;
+  text: string;
+  meta: DocMeta;
+  embedding: number[];
+  score?: number;
+}
+
+interface IncomingDoc {
+  id?: string;
+  text: string;
+  meta?: DocMeta;
+}
+
+interface ScoredChunk {
+  row: StoredChunk;
+  score: number;
+}
+
+interface SafetyResult {
+  flagged: boolean;
+  categories: string[];
+  checked?: boolean;
+}
+
+interface SourceDiversity {
+  unique_sources: number;
+  total_chunks_used: number;
+  single_source_warning: boolean;
+}
 
 // ─── App Setup ───────────────────────────────────────────────────────────────
 const app = express();
 app.use(cors());                              // Allow all origins (lock this down before going public)
-app.use(express.json({ limit: '2mb' }));     // Accept JSON bodies up to 2MB
+app.use(express.json({ limit: '2mb' }));      // Accept JSON bodies up to 2MB
 
 // ─── API Docs ──────────────────────────────────────────────────────────────
-// Interactive Swagger UI at /api/docs, generated from swagger-spec.js.
+// Interactive Swagger UI at /api/docs, generated from swagger-spec.ts.
 // Kept as a static spec object rather than parsed from inline comments so
 // it can't silently drift from the actual routes without someone noticing.
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
@@ -139,7 +179,7 @@ app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
 // ─── Request Logger ───────────────────────────────────────────────────────────
 // Logs every request with method, path, response code, and elapsed milliseconds.
 // Useful for spotting slow OpenAI calls during development and demos.
-app.use(function (req, res, next) {
+app.use(function (req: Request, res: Response, next: NextFunction) {
   const start = process.hrtime.bigint();
   console.log(new Date().toISOString(), 'START', req.method, req.originalUrl);
   res.on('finish', function () {
@@ -154,13 +194,13 @@ app.use(function (req, res, next) {
 // Prevents the server from hanging silently on a stalled OpenAI call or slow page fetch.
 const WATCHDOG_MS = 120000;
 
-app.use(function (_req, res, next) {
+app.use(function (_req: Request, res: Response, next: NextFunction) {
   const t = setTimeout(function () {
     if (!res.headersSent) {
-      console.error("WATCHDOG TIMEOUT HIT");
+      console.error('WATCHDOG TIMEOUT HIT');
       res.status(504).json({
         ok: false,
-        error: "Gateway timeout (server watchdog 120s)"
+        error: 'Gateway timeout (server watchdog 120s)'
       });
     }
   }, WATCHDOG_MS);
@@ -177,18 +217,17 @@ app.use(function (_req, res, next) {
 // gpt-4o-mini: fast and cheap for constrained Q&A. Not a reasoning model — it follows the prompt rules.
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 20000 });
 const EMBEDDING_MODEL = 'text-embedding-3-small';
-const CHAT_MODEL      = 'gpt-4o-mini';
+const CHAT_MODEL = 'gpt-4o-mini';
 
 // ─── In-Memory Vector Store ───────────────────────────────────────────────────
 // All ingested content lives here as an array of objects.
-// Shape: { id, source_id, text, meta:{title?, company?, source_url?}, embedding:number[] }
 // WARNING: this resets every time the server restarts. Not for production use.
-const store = [];
+const store: StoredChunk[] = [];
 
 // ─── Cosine Similarity ────────────────────────────────────────────────────────
 // Measures how semantically close two embedding vectors are.
 // Returns a value between -1 and 1. Above 0.25 is considered a relevant match (see MIN_SIM below).
-function cosineSim(a, b) {
+function cosineSim(a: number[], b: number[]): number {
   let dot = 0, na = 0, nb = 0;
   for (let i = 0; i < a.length; i++) {
     const ai = a[i], bi = b[i];
@@ -204,9 +243,9 @@ function cosineSim(a, b) {
 // Hard ceiling: 5000 chars (~1250 tokens), safely under the embedding model's 8192-token limit.
 const CHUNK_MAX_CHARS = 5000;
 
-function chunkText(text, maxLen = 1200) {
+function chunkText(text: string, maxLen: number = 1200): string[] {
   const parts = String(text || '').split(/(\n{2,}|(?<=\.)\s+)/g).filter(Boolean);
-  const out = [];
+  const out: string[] = [];
   let buf = '';
   for (const p of parts) {
     // BUG FIX: buf can end up holding ONLY a whitespace delimiter (e.g. the
@@ -230,7 +269,7 @@ function chunkText(text, maxLen = 1200) {
 // Derives a human-readable company name from the source URL's domain.
 // Example: "https://www.acmecorp.com/policy" → "Acmecorp"
 // Used to label sources in query results when no explicit company name is provided.
-function deriveCompanyFromUrl(url) {
+function deriveCompanyFromUrl(url?: string | null): string | null {
   try {
     if (!url) return null;
     const hostname = new URL(url).hostname;
@@ -246,10 +285,10 @@ function deriveCompanyFromUrl(url) {
 // These let the browser scroll directly to and highlight a specific sentence on the source page.
 // Tries to pick up to 3 unique representative sentences from the chunk.
 // Falls back to slicing the head and middle of the text if no clean sentences are found.
-function buildTextFragmentUrls(sourceUrl, text) {
+function buildTextFragmentUrls(sourceUrl: string | null | undefined, text: string): string[] {
   try {
     if (!sourceUrl || !text) return [];
-    function norm(s) {
+    function norm(s: string): string {
       return String(s || '')
         .replace(/\u00A0/g, ' ')
         .replace(/\s+/g, ' ')
@@ -270,8 +309,8 @@ function buildTextFragmentUrls(sourceUrl, text) {
         sourceUrl + '#:~:text=' + encodeURIComponent(mid)
       ];
     }
-    const seen = new Set();
-    const uniq = [];
+    const seen = new Set<string>();
+    const uniq: string[] = [];
     for (let i = 0; i < sentences.length && uniq.length < 3; i++) {
       const s = sentences[i];
       if (!seen.has(s)) { seen.add(s); uniq.push(s); }
@@ -286,34 +325,34 @@ function buildTextFragmentUrls(sourceUrl, text) {
 // This keeps ingestion fast, safe, and consistent (no browser needed).
 // Prefers <main> and <article> content over raw <body> to reduce nav/footer noise.
 // Throws if the extracted text is too short or looks like a JS-required blocking page.
-async function fetchHtmlTextCheerio(url, timeoutMs = 8000) {
+async function fetchHtmlTextCheerio(url: string, timeoutMs: number = 8000): Promise<{ title: string; text: string; ok: true }> {
   try {
     const resp = await axios.get(url, {
       timeout: timeoutMs,
       maxRedirects: 5,
       responseType: 'text',
       headers: {
-        'user-agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36',
-        'accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36',
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'accept-language': 'en-US,en;q=0.9',
-        'cache-control':   'no-cache',
-        'pragma':          'no-cache'
+        'cache-control': 'no-cache',
+        'pragma': 'no-cache'
       },
       validateStatus: s => s >= 200 && s < 400
     });
-    let html = resp.data || '';
+    let html: string = resp.data || '';
     if (html.length > 2_000_000) html = html.slice(0, 2_000_000); // Cap at 2MB to avoid runaway memory
     const $ = cheerio.load(html);
-    const title   = $('title').first().text().trim() || url;
-    const main    = $('main').text();
+    const title = $('title').first().text().trim() || url;
+    const main = $('main').text();
     const article = $('article').text();
-    const body    = $('body').text();
+    const body = $('body').text();
     const combined = [main, article, body].filter(Boolean).join(' ');
     const text = combined.replace(/\s+/g, ' ').trim();
-    const ok = text && text.length > 120 && !/enable javascript/i.test(text);
+    const ok = Boolean(text && text.length > 120 && !/enable javascript/i.test(text));
     if (!ok) throw new Error('Cheerio extract too small/blocked');
     return { title, text, ok: true };
-  } catch (e) {
+  } catch (e: any) {
     throw new Error('Cheerio fetch failed: ' + (e.code || '') + ' ' + (e.message || e));
   }
 }
@@ -321,10 +360,10 @@ async function fetchHtmlTextCheerio(url, timeoutMs = 8000) {
 // ─── Single Embedding ─────────────────────────────────────────────────────────
 // Embeds a single string (used for query embedding at search time).
 // Truncates to 5000 chars as a safeguard before sending to OpenAI.
-async function embedOne(text) {
+async function embedOne(text: string): Promise<number[]> {
   const safe = String(text || '').slice(0, 5000);
   const r = await openai.embeddings.create({ model: EMBEDDING_MODEL, input: safe });
-  return r.data[0].embedding;
+  return r.data[0].embedding as number[];
 }
 
 // ─── Batch Embed + Store ──────────────────────────────────────────────────────
@@ -332,21 +371,21 @@ async function embedOne(text) {
 // in a single batch embedding call per doc. This is the key performance win:
 // a 33-chunk page = 1 OpenAI round trip instead of 33 serial calls.
 // Each chunk is stored in the in-memory vector store with its metadata.
-async function embedAndStoreDocs(docs) {
+async function embedAndStoreDocs(docs: IncomingDoc[]): Promise<number> {
   let chunksAdded = 0;
   for (const doc of docs) {
     const baseId = doc.id || ('doc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
     const companyFromUrl = deriveCompanyFromUrl(doc.meta && doc.meta.source_url);
-    const meta = {
-      title:      (doc.meta && doc.meta.title)      || null,
+    const meta: DocMeta = {
+      title: (doc.meta && doc.meta.title) || null,
       source_url: (doc.meta && doc.meta.source_url) || null,
-      company:    (doc.meta && doc.meta.company)    || companyFromUrl || 'Unknown'
+      company: (doc.meta && doc.meta.company) || companyFromUrl || 'Unknown'
     };
     const chunks = chunkText(doc.text);
     // Single batch call — all chunks for this doc go in one OpenAI request
     const r = await openai.embeddings.create({ model: EMBEDDING_MODEL, input: chunks.map(c => c.slice(0, 5000)) });
     for (let j = 0; j < chunks.length; j++) {
-      store.push({ id: baseId + '#' + j, source_id: baseId, text: chunks[j], meta, embedding: r.data[j].embedding });
+      store.push({ id: baseId + '#' + j, source_id: baseId, text: chunks[j], meta, embedding: r.data[j].embedding as number[] });
     }
     chunksAdded += chunks.length;
   }
@@ -358,13 +397,13 @@ async function embedAndStoreDocs(docs) {
 // POST /api/ingest
 // Accepts pre-parsed docs as JSON. Use this when you already have clean text
 // and don't need the server to fetch or parse anything.
-app.post('/api/ingest', async function (req, res) {
+app.post('/api/ingest', async function (req: Request, res: Response) {
   try {
-    const docs = Array.isArray(req.body.docs) ? req.body.docs : [];
+    const docs: IncomingDoc[] = Array.isArray(req.body.docs) ? req.body.docs : [];
     if (!docs.length) return res.status(400).json({ ok: false, error: 'No docs provided' });
     const added = await embedAndStoreDocs(docs);
     res.json({ ok: true, chunks_added: added, total_chunks: store.length });
-  } catch (e) {
+  } catch (e: any) {
     console.error('INGEST ERROR:', e);
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -373,12 +412,13 @@ app.post('/api/ingest', async function (req, res) {
 // POST /api/ingest-urls
 // Accepts a list of URLs, fetches and extracts each one via Cheerio, then embeds and stores.
 // Returns a per-URL error list so partial failures don't kill the whole batch.
-app.post('/api/ingest-urls', async function (req, res) {
+app.post('/api/ingest-urls', async function (req: Request, res: Response) {
   try {
-    const urls = Array.isArray(req.body.urls) ? req.body.urls : [];
+    const urls: string[] = Array.isArray(req.body.urls) ? req.body.urls : [];
     if (!urls.length) return res.status(400).json({ ok: false, error: 'No urls provided' });
 
-    const docs = [], errors = [];
+    const docs: IncomingDoc[] = [];
+    const errors: { url: string; error: string }[] = [];
     for (const url of urls) {
       try {
         const got = await fetchHtmlTextCheerio(url, 8000);
@@ -390,25 +430,25 @@ app.post('/api/ingest-urls', async function (req, res) {
           // "https://en.wikipedia.org/wiki/...") produced IDENTICAL ids, silently
           // merging genuinely different pages into one source in the vector store.
           // A hash of the full URL avoids prefix collisions entirely.
-          id:   'url_' + crypto.createHash('sha256').update(url).digest('base64url').slice(0, 16),
+          id: 'url_' + crypto.createHash('sha256').update(url).digest('base64url').slice(0, 16),
           text: got.text,
           meta: { title: got.title, source_url: url }
         });
-      } catch (e) {
+      } catch (e: any) {
         console.error('INGEST FAIL:', url, String(e.message || e));
         errors.push({ url, error: String(e.message || e) });
       }
     }
     const added = docs.length ? await embedAndStoreDocs(docs) : 0;
     res.json({
-      ok:            docs.length > 0,
+      ok: docs.length > 0,
       urls_received: urls.length,
       urls_ingested: docs.length,
-      chunks_added:  added,
-      total_chunks:  store.length,
+      chunks_added: added,
+      total_chunks: store.length,
       errors
     });
-  } catch (e) {
+  } catch (e: any) {
     console.error('INGEST-URLS ERROR:', e);
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -419,17 +459,17 @@ app.post('/api/ingest-urls', async function (req, res) {
 // in the store (cosine similarity, threshold 0.25), builds a CONTEXT block, and asks
 // gpt-4o-mini to answer strictly from that context with bracket citations.
 // Returns the answer plus a structured source list with scores, snippets, and deep-link URLs.
-app.post('/api/query', async function (req, res) {
+app.post('/api/query', async function (req: Request, res: Response) {
   try {
-    const question = req.body && req.body.question;
+    const question: string | undefined = req.body && req.body.question;
     const topK = Math.min(Math.max(1, Number((req.body && req.body.topK) || 4)), 8);
     if (!question) return res.status(400).json({ ok: false, error: 'Missing question' });
     if (!store.length) return res.json({ ok: true, answer: "I'm not certain from the provided documents (none ingested yet).", sources: [] });
 
     const qemb = await embedOne(question);
     const MIN_SIM = 0.25; // Chunks below this cosine score are treated as not relevant
-    const scored = store
-      .map(d => ({ row: d, score: cosineSim(qemb, d.embedding) }))
+    const scored: StoredChunk[] = store
+      .map((d): ScoredChunk => ({ row: d, score: cosineSim(qemb, d.embedding) }))
       .sort((a, b) => b.score - a.score)
       .filter(s => s.score >= MIN_SIM)
       .slice(0, topK)
@@ -437,7 +477,7 @@ app.post('/api/query', async function (req, res) {
 
     // Build the CONTEXT block passed to the model.
     // Each chunk is labeled with its index, company, and source ID for citation tracking.
-    const parts = [];
+    const parts: string[] = [];
     for (let i = 0; i < scored.length; i++) {
       const d = scored[i];
       parts.push('[' + (i + 1) + '|' + (d.meta && d.meta.company ? d.meta.company : 'Unknown') + '|' + d.source_id + '] ' + d.text);
@@ -459,8 +499,8 @@ app.post('/api/query', async function (req, res) {
     const chat = await openai.chat.completions.create({
       model: CHAT_MODEL,
       messages: [
-        { role: "system", content: "You answer strictly from CONTEXT and include bracket citations." },
-        { role: "user",   content: prompt }
+        { role: 'system', content: 'You answer strictly from CONTEXT and include bracket citations.' },
+        { role: 'user', content: prompt }
       ],
       temperature: 0
     });
@@ -470,13 +510,13 @@ app.post('/api/query', async function (req, res) {
     // Run the generated answer through OpenAI's moderation endpoint before
     // returning it. If flagged, replace the answer with a safe refusal rather
     // than surfacing the original text to the caller.
-    let safety = { flagged: false, categories: [] };
+    const safety: SafetyResult = { flagged: false, categories: [] };
     try {
       const mod = await openai.moderations.create({ input: answer || ' ' });
       const result = mod.results && mod.results[0];
       if (result && result.flagged) {
         safety.flagged = true;
-        safety.categories = Object.keys(result.categories || {}).filter(k => result.categories[k]);
+        safety.categories = Object.keys(result.categories || {}).filter(k => (result.categories as any)[k]);
       }
     } catch (modErr) {
       console.error('MODERATION ERROR:', modErr);
@@ -484,7 +524,7 @@ app.post('/api/query', async function (req, res) {
       safety.checked = false;
     }
     const safeAnswer = safety.flagged
-      ? "This response was withheld because it did not pass a content safety check."
+      ? 'This response was withheld because it did not pass a content safety check.'
       : answer;
 
     // ─── Source Diversity / Bias Flag ───────────────────────────────────────
@@ -493,7 +533,7 @@ app.post('/api/query', async function (req, res) {
     // RAG (one skewed or outdated source can dominate the answer unchecked),
     // so flag it explicitly rather than presenting the answer as broadly supported.
     const uniqueSources = new Set(scored.map(s => s.source_id));
-    const sourceDiversity = {
+    const sourceDiversity: SourceDiversity = {
       unique_sources: uniqueSources.size,
       total_chunks_used: scored.length,
       single_source_warning: uniqueSources.size <= 1 && scored.length > 0
@@ -505,17 +545,17 @@ app.post('/api/query', async function (req, res) {
       safety,
       source_diversity: sourceDiversity,
       sources: scored.map((d, i) => ({
-        idx:                i + 1,
-        company:            (d.meta && d.meta.company)    || 'Unknown',
-        source_id:          d.source_id,
-        title:              (d.meta && d.meta.title)      || null,
-        source_url:         (d.meta && d.meta.source_url) || null,
-        score:              Number((d.score || 0).toFixed(4)),
-        snippet:            d.text.length > 200 ? (d.text.slice(0, 200) + '…') : d.text,
+        idx: i + 1,
+        company: (d.meta && d.meta.company) || 'Unknown',
+        source_id: d.source_id,
+        title: (d.meta && d.meta.title) || null,
+        source_url: (d.meta && d.meta.source_url) || null,
+        score: Number((d.score || 0).toFixed(4)),
+        snippet: d.text.length > 200 ? (d.text.slice(0, 200) + '…') : d.text,
         text_fragment_urls: buildTextFragmentUrls((d.meta && d.meta.source_url) || null, d.text)
       }))
     });
-  } catch (e) {
+  } catch (e: any) {
     console.error('QUERY ERROR:', e);
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -526,8 +566,8 @@ app.post('/api/query', async function (req, res) {
 // GET /api/health
 // Returns total chunk count and a breakdown by source. Use this to verify
 // that ingestion actually stored content before running queries.
-app.get('/api/health', function (_req, res) {
-  const bySource = {};
+app.get('/api/health', function (_req: Request, res: Response) {
+  const bySource: Record<string, number> = {};
   for (const r of store) {
     const key = ((r.meta && r.meta.company) || 'Unknown') + '|' + r.source_id;
     bySource[key] = (bySource[key] || 0) + 1;
@@ -535,11 +575,11 @@ app.get('/api/health', function (_req, res) {
   res.json({ ok: true, chunks: store.length, sources: bySource });
 });
 
-// GET /api/debug/peek?company=<name>&limit=N
+// GET /api/debug/peek?company=<n>&limit=N
 // Returns a few raw stored rows filtered by company name.
 // Useful for sanity-checking what actually got indexed after an ingest.
-app.get('/api/debug/peek', function (req, res) {
-  const company = req.query.company;
+app.get('/api/debug/peek', function (req: Request, res: Response) {
+  const company = req.query.company as string | undefined;
   const limit = Math.max(1, Math.min(5, Number(req.query.limit || 2)));
   const rows = store
     .filter(function (r) {
@@ -558,7 +598,7 @@ app.get('/api/debug/peek', function (req, res) {
 // GET /api/testpage
 // A local, static HTML page used to verify the highlight proxy works end-to-end
 // without depending on any external site. Always contains the same known text.
-app.get('/api/testpage', function (_req, res) {
+app.get('/api/testpage', function (_req: Request, res: Response) {
   res.set('content-type', 'text/html; charset=utf-8').send([
     '<!doctype html><html><head><meta charset="utf-8"><title>RAG HL Test</title>',
     '<style>body{font:16px system-ui,Arial;margin:2rem;line-height:1.5} h1{margin-top:0}</style>',
@@ -582,10 +622,10 @@ app.get('/api/testpage', function (_req, res) {
 //
 // The base href is set to the source origin so relative asset paths (images, CSS, JS)
 // continue to resolve correctly inside the iframe.
-app.get('/api/highlight-proxy', async function (req, res) {
+app.get('/api/highlight-proxy', async function (req: Request, res: Response) {
   try {
-    const url = req.query.url;
-    const q   = req.query.q || '';
+    const url = req.query.url as string | undefined;
+    const q = (req.query.q as string | undefined) || '';
     if (!url || !q) return res.status(400).send('Missing url or q');
 
     const resp = await axios.get(url, {
@@ -594,22 +634,22 @@ app.get('/api/highlight-proxy', async function (req, res) {
       responseType: 'text',
       validateStatus: s => s >= 200 && s < 400,
       headers: {
-        'user-agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36',
-        'accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36',
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'accept-language': 'en-US,en;q=0.9',
-        'cache-control':   'no-cache',
-        'pragma':          'no-cache'
+        'cache-control': 'no-cache',
+        'pragma': 'no-cache'
       }
     });
 
     const origin = new URL(url).origin + '/'; // Resolve relative asset paths (e.g. Wikipedia /w/load.php)
     const htmlOut = injectHighlight(resp.data, q, {
       baseHref: origin,
-      maxGap:   80,
-      diag:     { enabled: true, mode: 'overlay' } // Set mode to 'console' to suppress the on-page overlay
+      maxGap: 80,
+      diag: { enabled: true, mode: 'overlay' } // Set mode to 'console' to suppress the on-page overlay
     });
     res.set('content-type', 'text/html; charset=utf-8').send(htmlOut);
-  } catch (e) {
+  } catch (e: any) {
     res.status(502).send('Proxy fetch failed: ' + (e && e.message ? e.message : e));
   }
 });
