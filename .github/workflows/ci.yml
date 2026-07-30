@@ -1,4 +1,4 @@
-name: CI
+name: Backend Tests and Type Checks
 
 # Runs on every push and pull request against main.
 #
