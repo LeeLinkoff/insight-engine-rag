@@ -9,5 +9,5 @@
     "outDir": "dist",
     "lib": ["ES2020", "DOM"]
   },
-  "include": ["server.ts", "evals.ts", "highlight-safe.ts"]
+  "include": ["server.ts", "evals.ts", "highlight-safe.ts", "swagger-spec.ts"]
 }

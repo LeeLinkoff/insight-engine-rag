@@ -26,5 +26,12 @@
     "express": "^4.21.2",
     "openai": "^6.2.0",
     "swagger-ui-express": "^5.0.1"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "@types/node": "^26.1.2",
+    "@types/express": "^5.0.6",
+    "@types/cors": "^2.8.19",
+    "@types/swagger-ui-express": "^4.1.8"
   }
 }

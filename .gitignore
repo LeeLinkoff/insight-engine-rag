@@ -53,3 +53,6 @@ id_rsa*
 
 # ── Windows batch scripts (local dev helpers, not part of the repo) ──
 *.bat
+
+# ── Status of builds, etc
+*.txt
