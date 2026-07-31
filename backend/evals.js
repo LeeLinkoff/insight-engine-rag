@@ -61,7 +61,7 @@ const TEST_CASES = [
   // Add more cases here as real documents get ingested.
 ];
 
-const REFUSAL_TEXT = "I'm not certain from the provided documents.";
+const REFUSAL_TEXT = "I'm not certain from the provided documents"; // no trailing period: the empty-store message appends "(none ingested yet)." right after this phrase, so matching without the period catches both refusal variants
 
 async function runCase(tc) {
   const resp = await fetch(BASE_URL + '/api/query', {
