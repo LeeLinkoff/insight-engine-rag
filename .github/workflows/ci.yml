@@ -9,11 +9,12 @@ name: Backend Tests and Type Checks
 #                        highlight-safe.ts, swagger-spec.ts) compile clean
 #                        under strict mode (npx tsc --noEmit). No secrets
 #                        needed, this is a pure static check.
-#   3. eval-harness     — boots the real server and runs evals.js against
-#                        it end to end. Requires OPENAI_API_KEY as a repo
-#                        secret, so it's skipped automatically on forked
-#                        PRs (which never receive secrets) rather than
-#                        failing loudly for external contributors.
+#   3. eval-harness     — boots the real server, ingests the content the
+#                        eval test cases are written against, then runs
+#                        evals.js end to end. Requires OPENAI_API_KEY as a
+#                        repo secret, so it's skipped automatically on
+#                        forked PRs (which never receive secrets) rather
+#                        than failing loudly for external contributors.
 #
 # NOTE ON JOB 3: evals.js has one real regression test case grounded in
 # actual ingested content (question + real source_id from a live ingest,
@@ -26,6 +27,7 @@ name: Backend Tests and Type Checks
 #    the known-fact question still get answered and cited correctly).
 #  * It does not yet cover the breadth of your actual RAG logic, more
 #    test cases are the way to close that gap, not a rewrite of this job.
+
 "on":
   push:
     branches: [main]
@@ -163,6 +165,41 @@ jobs:
           echo "Server did not become healthy in time"
           cat server.log
           exit 1
+
+      # evals.js's "known_fact_in_store" test case expects a real, already-
+      # ingested source (source_id url_9jZgqnjjV0uNjzFv, the deterministic
+      # SHA-256 hash of this exact URL). A fresh CI server boots with an
+      # empty store, so without this step every run of that test case would
+      # fail, not because the code is broken, but because nothing was ever
+      # loaded for it to answer from. This ingests the one page the test
+      # case is actually written against.
+      #
+      # IMPORTANT: this step checks the actual response, not just the HTTP
+      # status. GitHub's runner has a different network path to Wikipedia
+      # than a home connection does (different IP, possible rate limiting,
+      # different latency), so a silent ingest failure here would make the
+      # eval harness fail in a way that looks exactly like a real logic
+      # regression, when the actual cause is content never being loaded.
+      # Failing loudly here, with the real response body printed, means a
+      # future failure is diagnosable in seconds instead of looking like
+      # a confusing false regression.
+      - name: Ingest content for the eval harness
+        if: steps.check_key.outputs.has_key == 'true'
+        run: |
+          RESPONSE=$(curl -s -X POST http://127.0.0.1:3001/api/ingest-urls \
+            -H "Content-Type: application/json" \
+            -d '{"urls":["https://en.wikipedia.org/wiki/Return_policy"]}')
+          echo "Ingest response: $RESPONSE"
+          if ! echo "$RESPONSE" | grep -q '"ok":true'; then
+            echo "ERROR: Ingest did not return ok:true. Eval harness would run against an empty or incomplete store."
+            exit 1
+          fi
+          CHUNKS=$(echo "$RESPONSE" | grep -oP '"chunks_added":\K[0-9]+')
+          echo "Chunks added: $CHUNKS"
+          if [ -z "$CHUNKS" ] || [ "$CHUNKS" -lt 1 ]; then
+            echo "ERROR: chunks_added was 0 or missing. Ingest technically returned ok:true but added no content."
+            exit 1
+          fi
 
       - name: Run eval harness
         if: steps.check_key.outputs.has_key == 'true'
