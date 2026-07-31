@@ -137,10 +137,23 @@ jobs:
               rag-backend
           '
 
+      # BUG FIX: VITE_API_BASE was never set anywhere in this pipeline.
+      # Vite only substitutes a VITE_-prefixed variable if it's actually
+      # present at build time (via .env or a real environment variable).
+      # With nothing set, import.meta.env.VITE_API_BASE compiled to
+      # genuinely `undefined` in the production bundle, which is exactly
+      # the RoutingErrorNotice condition App.jsx checks for
+      # (typeof API_BASE === 'undefined'). The comment in App.jsx always
+      # said production should get an explicit empty string (since Apache
+      # proxies /api/* on the same origin, no base URL is needed), but
+      # nothing ever actually wrote that value. Writing frontend/.env
+      # with VITE_API_BASE= (empty) here, before the build, makes Vite
+      # substitute a real empty string instead of leaving it unset.
       - name: Build frontend in a throwaway Docker container (on the VPS)
         run: |
           ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" '
             set -e
+            echo "VITE_API_BASE=" > "${{ secrets.VPS_PROJECT_PATH }}/frontend/.env"
             docker run --rm \
               -v "${{ secrets.VPS_PROJECT_PATH }}/frontend:/app" \
               -w /app \
