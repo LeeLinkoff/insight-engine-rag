@@ -110,7 +110,6 @@
 
 'use strict';
 
-
 // ─── Dependencies ────────────────────────────────────────────────────────────
 import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
@@ -394,6 +393,20 @@ async function embedAndStoreDocs(docs: IncomingDoc[]): Promise<number> {
 }
 
 // ─── RAG Routes ───────────────────────────────────────────────────────────────
+
+// DELETE /api/clear
+// Empties the in-memory vector store without requiring a full server
+// restart. Added after real friction during testing: the store has no
+// other way to reset between test rounds, old ingested content silently
+// stacks up forever and can dominate retrieval for unrelated later
+// questions, with no visible signal that it's happening.
+app.delete('/api/clear', function (_req: Request, res: Response) {
+  const clearedChunks = store.length;
+  const clearedSources = new Set(store.map(s => s.source_id)).size;
+  store.length = 0;
+  console.log('STORE CLEARED:', clearedChunks, 'chunks,', clearedSources, 'sources removed');
+  res.json({ ok: true, cleared_chunks: clearedChunks, cleared_sources: clearedSources });
+});
 
 // POST /api/ingest
 // Accepts pre-parsed docs as JSON. Use this when you already have clean text

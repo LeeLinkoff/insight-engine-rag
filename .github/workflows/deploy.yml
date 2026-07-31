@@ -68,6 +68,17 @@ jobs:
         working-directory: backend
         run: npx tsc --noEmit
 
+      # GitHub-hosted runners include Docker by default, so the actual
+      # Docker build (same command build_back.bat runs locally, same
+      # Dockerfile the VPS deploy step uses) is verified here, on
+      # disposable infrastructure, before deploy.yml's deploy job ever
+      # SSHes into the real VPS and attempts it there. Catches a broken
+      # Dockerfile or build-time failure early instead of discovering it
+      # mid-deployment.
+      - name: Backend — Docker build
+        working-directory: backend
+        run: docker build -t rag-backend-verify .
+
       - name: Frontend — install deps
         working-directory: frontend
         run: npm install

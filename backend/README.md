@@ -27,6 +27,7 @@ RAG systems fail in specific, known ways. This service has explicit checks for t
 | POST | `/api/ingest` | Ingest pre-parsed docs (`{ docs: [{ id?, text, meta? }] }`) |
 | POST | `/api/ingest-urls` | Fetch, extract, and ingest a list of URLs |
 | POST | `/api/query` | Ask a question; returns a grounded answer, sources, safety flag, and source diversity info |
+| DELETE | `/api/clear` | Empty the vector store without restarting the server. No authentication, same as every other endpoint here |
 | GET | `/api/highlight-proxy?url=&q=` | Serves a proxied source page with the answer text highlighted |
 | GET | `/api/health` | Store size and per-source chunk counts |
 | GET | `/api/debug/peek?company=&limit=` | Peek at a few stored rows for debugging |
@@ -89,11 +90,15 @@ Prints PASS/FAIL per case plus retrieval precision, and exits with code `1` if a
 
 ## Known limitations
 
-- **No persistence.** The vector store is in memory only; restarting the server clears everything.
+- **No persistence.** The vector store is in memory only; restarting the server clears everything. A `DELETE /api/clear` endpoint resets it without a full restart, but nothing survives a real process restart.
 - **Single-process only.** Not designed for concurrent scaling or production load.
-- **No auth or rate limiting.** Add both before exposing this publicly.
+- **No auth or rate limiting.** Add both before exposing this publicly. This includes `/api/clear`, which anyone who finds it can call to wipe the store.
 - **CORS is fully open.** Restrict allowed origins before production use.
-- **Reference implementation.** This project is intended as an engineering demonstration and learning/reference implementation. While the API and documentation are complete, additional operational hardening (authentication, observability, deployment automation, scaling, etc.) would be recommended before production deployment.
+- **Reference implementation.** This project is intended as an engineering demonstration and learning/reference implementation. While the API and documentation are complete, additional operational hardening (authentication, observability, scaling, etc.) would be recommended before production deployment. CI (automated testing on every push) and CD (two-stage automated deployment to a VPS) are already in place, see `.github/workflows/ci.yml` and `deploy.yml`.
+
+## TypeScript
+
+Type-checked TypeScript versions of every backend file (`server.ts`, `evals.ts`, `highlight-safe.ts`, `swagger-spec.ts`) exist alongside the JavaScript originals and compile cleanly under `strict: true`. Production currently deploys the JavaScript versions; see `DEPLOYMENT_AND_ARCHITECTURE.md` for what switching to the TypeScript build would require.
 
 ## Upgrade path
 
