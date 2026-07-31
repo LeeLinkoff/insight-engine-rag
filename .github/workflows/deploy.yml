@@ -122,6 +122,21 @@ jobs:
             --exclude '.git' \
             ./frontend/ "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_PROJECT_PATH }}/frontend/"
 
+      # Writes backend/.env from the GitHub secret on every deploy, instead
+      # of requiring it to be updated by hand on the VPS. Collapses key
+      # rotation from three places to keep in sync (local .env, GitHub
+      # Secret, VPS .env) down to two: rotate OPENAI_API_KEY once in
+      # GitHub Secrets, the next deploy pushes it to the VPS automatically.
+      # rsync above deliberately excludes .env so this is the only place
+      # that writes it, no risk of the two conflicting.
+      - name: Write backend .env from GitHub Secrets
+        run: |
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" '
+            set -e
+            echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" > "${{ secrets.VPS_PROJECT_PATH }}/backend/.env"
+            echo "PORT=3001" >> "${{ secrets.VPS_PROJECT_PATH }}/backend/.env"
+          '
+
       - name: Rebuild and restart backend container
         run: |
           ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" '
