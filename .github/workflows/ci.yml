@@ -1,4 +1,5 @@
 name: Backend Tests and Type Checks
+=======
 
 # Runs on every push and pull request against main.
 #
@@ -15,15 +16,17 @@ name: Backend Tests and Type Checks
 #                        PRs (which never receive secrets) rather than
 #                        failing loudly for external contributors.
 #
-# NOTE ON JOB 3: evals.js currently ships with placeholder test cases
-# (see TEST_CASES in evals.js — one entry still has expected_source_ids:
-# ['REPLACE_WITH_REAL_SOURCE_ID']). This job will run and report PASS/FAIL
-# against whatever is actually configured, but it is not yet a meaningful
-# regression gate until real test cases with real ingested content are
-# filled in. Documenting that honestly here rather than pretending this
-# job blocks bad merges today — right now it mostly proves the endpoint
-# is reachable and returns well-formed responses.
-
+# NOTE ON JOB 3: evals.js has one real regression test case grounded in
+# actual ingested content (question + real source_id from a live ingest,
+# not a placeholder), plus one refusal-case test. That's a genuine start,
+# not a comprehensive suite, worth adding to over time as more content
+# gets ingested and more question types get covered.
+#
+# Net effect:
+#  * This job can catch a real regression in the one covered case (does
+#    the known-fact question still get answered and cited correctly).
+#  * It does not yet cover the breadth of your actual RAG logic, more
+#    test cases are the way to close that gap, not a rewrite of this job.
 "on":
   push:
     branches: [main]
@@ -73,7 +76,32 @@ jobs:
         run: npm install
 
       - name: tsc --noEmit
-        run: npx tsc --noEmit
+        # ============================================================
+        # IMPORTANT: use --no-install, not plain `npx tsc --noEmit`.
+        #
+        # If TypeScript isn't actually resolvable locally (node_modules
+        # missing/incomplete, wrong working directory, etc.), plain
+        # `npx tsc` does NOT just fail with a clear error. It silently
+        # falls back to searching the npm REGISTRY for any unrelated
+        # package that happens to expose a command literally named
+        # `tsc`, finds a totally different, unmaintained, years-old
+        # package also called "tsc" (v2.0.4), installs THAT, and runs
+        # it instead of your real TypeScript compiler:
+        #
+        #   npm warn exec The following package was not found and will
+        #   be installed: tsc@2.0.4
+        #   npm warn deprecated tsc@2.0.4: Package no longer supported.
+        #   This is not the tsc command you are looking for
+        #
+        # This produces a confusing, unrelated failure that has nothing
+        # to do with your actual TypeScript code, and wastes real time
+        # debugging the wrong thing.
+        #
+        # --no-install forces npx to use ONLY the locally installed
+        # package and fail loudly and clearly if it's missing, instead
+        # of silently substituting a random registry package.
+        # ============================================================
+        run: npx --no-install tsc --noEmit
 
   eval-harness:
     name: Eval harness (live server)

@@ -51,8 +51,8 @@ deploy_key.pub
 id_ed25519*
 id_rsa*
 
-# ── Windows batch scripts (local dev helpers, not part of the repo) ──
-*.bat
+# ── Local secrets folder (root level, never committed) ───────
+Secrets/
 
 # ── Status of builds, etc
 *.txt

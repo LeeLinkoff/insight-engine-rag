@@ -41,9 +41,16 @@ const BASE_URL = process.env.EVAL_BASE_URL || 'http://127.0.0.1:3001';
 const TEST_CASES = [
   {
     name: 'known_fact_in_store',
-    question: 'What does the ingested document say about <topic>?',
+    // Real ingested page: https://en.wikipedia.org/wiki/Return_policy
+    // Broad, central question for that page so retrieval reliably pulls
+    // from it regardless of which specific chunks score highest.
+    question: 'What does this document explain about return policies?',
     expect: 'answer',
-    expected_source_ids: ['REPLACE_WITH_REAL_SOURCE_ID']
+    // Real source_id, verified deterministic (SHA-256 hash of the URL,
+    // not random/time-based — same URL always produces this exact id).
+    // If the URL ever changes or the hashing logic in server.js changes,
+    // this needs updating to match.
+    expected_source_ids: ['url_9jZgqnjjV0uNjzFv']
   },
   {
     name: 'question_with_no_grounding',
