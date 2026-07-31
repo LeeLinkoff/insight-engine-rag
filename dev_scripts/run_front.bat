@@ -1,5 +1,5 @@
 @echo off
-cd /d %~dp0frontend
+cd /d %~dp0..\frontend
 
 if not exist "package.json" (
     echo.
@@ -65,7 +65,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo Reminder: make sure run_backend.bat is already running in
+echo Reminder: make sure run_back.bat is already running in
 echo another window before you open the app in a browser.
 echo.
 echo Starting Vite dev server...

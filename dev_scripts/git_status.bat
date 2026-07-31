@@ -7,9 +7,9 @@ REM  Place this file anywhere inside the git repo (project root
 REM  is fine).
 REM ============================================================
 
-cd /d %~dp0
+cd /d %~dp0..
 
-set "REPORT=%~dp0git_status_report-SAFE_TO_DELETE.txt"
+set "REPORT=%~dp0..\dev_reports\git_status_report-SAFE_TO_DELETE.txt"
 
 echo Checking this is actually a git repo...
 git rev-parse --is-inside-work-tree >nul 2>&1

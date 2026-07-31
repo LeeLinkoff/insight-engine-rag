@@ -32,6 +32,18 @@ RAG systems fail in specific, known ways. This service has explicit checks for t
 | GET | `/api/debug/peek?company=&limit=` | Peek at a few stored rows for debugging |
 | GET | `/api/testpage` | Static local page for verifying the highlighter |
 
+## API Documentation
+
+Interactive OpenAPI (Swagger) documentation is available while the server is running:
+
+```
+http://127.0.0.1:3001/api/docs
+```
+
+The OpenAPI specification (`swagger-spec.js`) is maintained manually as a static specification rather than generated from inline comments. This keeps the documentation explicit, version controlled, and synchronized with the implementation.
+
+The current Swagger documentation reflects the implemented API endpoints, request payloads, response structures, and query parameters.
+
 ## Running the server
 
 ```bash
@@ -81,6 +93,7 @@ Prints PASS/FAIL per case plus retrieval precision, and exits with code `1` if a
 - **Single-process only.** Not designed for concurrent scaling or production load.
 - **No auth or rate limiting.** Add both before exposing this publicly.
 - **CORS is fully open.** Restrict allowed origins before production use.
+- **Reference implementation.** This project is intended as an engineering demonstration and learning/reference implementation. While the API and documentation are complete, additional operational hardening (authentication, observability, deployment automation, scaling, etc.) would be recommended before production deployment.
 
 ## Upgrade path
 

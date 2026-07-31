@@ -1,5 +1,5 @@
 @echo off
-cd /d %~dp0backend
+cd /d %~dp0..\backend
 
 echo Checking for .env file...
 
@@ -40,21 +40,11 @@ echo .env found, OPENAI_API_KEY line present.
 echo.
 
 echo Checking if port 3001 is already in use...
-set "FOUND_PID="
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr :3001 ^| findstr LISTENING') do (
-    set "FOUND_PID=%%p"
+    echo Found PID %%p listening on port 3001, killing it...
+    taskkill /PID %%p /F >nul 2>&1
 )
-
-if defined FOUND_PID (
-    echo Port 3001 is already in use by PID %FOUND_PID%.
-    echo This is almost always a leftover server from a previous run.
-    echo Killing it so this run can bind the port cleanly...
-    taskkill /PID %FOUND_PID% /F >nul 2>&1
-    timeout /t 1 /nobreak >nul
-    echo Done.
-) else (
-    echo Port 3001 is free.
-)
+echo Port 3001 check complete.
 echo.
 
 call npm install

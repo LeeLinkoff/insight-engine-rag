@@ -4,6 +4,8 @@ This project was built and tested locally first. Getting it running on a VPS req
 
 **Note:** this process is now automated by `.github/workflows/deploy.yml`, which runs these same steps via SSH on every push to `main`. This doc remains accurate as a reference/fallback.
 
+**Also note:** `dev_scripts/` and `dev_reports/` (local batch scripts and their output reports) are never uploaded to the VPS, local-only developer tooling, not part of the deployed application.
+
 ## 1. VPS Environment Reality
 
 The VPS had:
@@ -146,7 +148,44 @@ cp -r /opt/rag/frontend/dist/* /home/leelinko/public_html/mvps/rag/
 
 Apache now serves the UI.
 
-## 6. API Routing Rule
+
+## 6. Continuous Integration & Deployment
+
+Deployment is now fully automated through GitHub Actions using the workflows in
+`.github/workflows/ci.yml` and `.github/workflows/deploy.yml`.
+
+The CI workflow validates the project on GitHub-hosted runners before deployment.
+The deployment workflow then connects to the VPS over SSH and performs the same
+deployment steps that were originally executed manually.
+
+Deployment pipeline:
+
+```text
+Developer
+    │
+git push main
+    │
+    ▼
+GitHub Actions
+    │
+    ├── Checkout repository
+    ├── Install dependencies
+    ├── Verify frontend build
+    ├── SSH to VPS
+    ├── Pull latest source
+    ├── Build frontend in Docker
+    ├── Deploy Vite dist/ to Apache
+    ├── Rebuild backend Docker image
+    ├── Replace running container
+    └── Verify deployment
+
+```
+
+The GitHub Actions runners are used only for validation and deployment orchestration.
+The application itself continues to execute entirely on the VPS.
+
+
+## 7. API Routing Rule
 
 Frontend never talks to Docker directly. It only talks to Apache:
 
@@ -165,7 +204,7 @@ This gives:
 * Clean environment separation
 * Identical frontend behavior locally and on VPS
 
-## 7. Final Architecture
+## 8. Final Architecture
 
 ```
 Browser
@@ -190,11 +229,11 @@ Apache (HTTPS)
 * Served as static files
 * Zero runtime Node dependency
 
-## 8. TypeScript Source (Not Currently Deployed)
+## 9. TypeScript Source (Not Currently Deployed)
 
 Type-checked TypeScript versions of the backend exist alongside the JavaScript originals (`server.ts`, `evals.ts`, `highlight-safe.ts`, `swagger-spec.ts`) and compile clean under `strict: true`, but production still runs the plain JavaScript via the Dockerfile above (`CMD ["node", "server.js"]`). Switching to the TypeScript build would require adding `RUN npx tsc` as a build step and pointing `CMD` at the compiled `dist/server.js` instead, see `DEPLOYMENT_AND_ARCHITECTURE.md` section 2.8 for the full Dockerfile diff.
 
-## 9. What This Demonstrates
+## 10. What This Demonstrates
 
 This was not "toy deployment." It required:
 

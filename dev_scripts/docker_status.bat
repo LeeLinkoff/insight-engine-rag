@@ -6,9 +6,9 @@ REM  networks, volumes, disk usage) into a text file, then opens
 REM  it in Notepad.
 REM ============================================================
 
-cd /d %~dp0
+cd /d %~dp0..
 
-set "REPORT=%~dp0docker_status_report-SAFE_TO_DELETE.txt"
+set "REPORT=%~dp0..\dev_reports\docker_status_report-SAFE_TO_DELETE.txt"
 
 echo Checking Docker is running...
 docker info >nul 2>&1

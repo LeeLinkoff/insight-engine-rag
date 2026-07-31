@@ -2,38 +2,19 @@
 REM ============================================================
 REM  build_back.bat
 REM  Builds and runs the backend in Docker.
-REM  Place this file in the project root, next to backend\ and
-REM  start_docker.bat.
+REM  Lives in dev_scripts\, alongside start_docker.bat.
+REM  Project root is one level up from this file.
 REM ============================================================
 
-cd /d %~dp0
-
-if exist "start_docker.bat" (
-    call start_docker.bat
-    if errorlevel 1 (
-        echo.
-        echo Docker did not start successfully, aborting.
-        pause
-        exit /b 1
-    )
-) else (
-    echo Checking if Docker is running...
-    docker info >nul 2>&1
-    if errorlevel 1 (
-        echo.
-        echo ============================================================
-        echo  ERROR: Docker does not appear to be running, and
-        echo  start_docker.bat was not found next to this script to
-        echo  start it automatically. Open Docker Desktop manually,
-        echo  wait for it to fully start, then run this script again.
-        echo ============================================================
-        echo.
-        pause
-        exit /b 1
-    )
+call "%~dp0start_docker.bat"
+if errorlevel 1 (
+    echo.
+    echo Docker did not start successfully, aborting.
+    pause
+    exit /b 1
 )
 
-cd /d %~dp0backend
+cd /d %~dp0..\backend
 
 if not exist ".env" (
     echo.

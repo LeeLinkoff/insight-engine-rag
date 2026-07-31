@@ -115,6 +115,10 @@ Both of these surfaced during real testing, not code review, and are documented 
 - **CI** (`.github/workflows/ci.yml`): on every push/PR, syntax-checks the JavaScript files, type-checks the TypeScript files under `strict: true`, and runs the eval harness against a live boot of the server (skipped on forked PRs, which never receive the required `OPENAI_API_KEY` secret).
 - **CD** (`.github/workflows/deploy.yml`): on push to `main`, first verifies the frontend actually builds cleanly on GitHub's own runner (fails fast, touches the VPS not at all), then only if that passes, syncs source to the VPS, rebuilds the backend container, rebuilds the frontend inside a throwaway Docker container on the VPS itself, deploys it to Apache, and verifies `/api/health` responds through the public domain. Deployment used to be a fully manual SSH process (still documented in `DEPLOYMENT_AND_ARCHITECTURE.md` for reference); it's automated now.
 
+## Local Development Tooling
+
+Two folders exist locally that are never uploaded to the VPS and aren't part of the deployed application: `dev_scripts/` (batch scripts automating local dev, build, Docker, and git/TypeScript diagnostic workflows) and `dev_reports/` (the output of those scripts, e.g. `ts_check_report-SAFE_TO_DELETE.txt`, `staged-diffs-SAFE_TO_DELETE.txt`). Both are tracked in git for portability across machines, but neither appears anywhere in the VPS deployment steps, consistent with `DEPLOYMENT_AND_ARCHITECTURE.md` section 1.2's upload table, which only lists `frontend/` and `backend/`.
+
 ## Tech Stack
 
 | Layer | Technology |

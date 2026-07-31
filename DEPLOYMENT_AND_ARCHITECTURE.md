@@ -46,6 +46,8 @@ Use SFTP (FileZilla or WinSCP) to upload source files before running any build c
 
 Do not upload `node_modules/`, `dist/`, or `.env`. These are either built on the VPS or must be created manually.
 
+**Also never uploaded:** `dev_scripts/` and `dev_reports/`. Both are local-only developer tooling (batch scripts for local dev/build/Docker/git workflows, and their output reports), not part of the deployed application.
+
 ---
 
 ## 1.3 Pre-Flight: Session Setup
@@ -388,3 +390,48 @@ This was not toy deployment. It required:
 * Eliminating double-API path issues caused by incorrect base path configuration
 
 This is production-grade deployment thinking, not tutorial-level DevOps.
+
+
+---
+
+
+## 2.10 Continuous Integration & Deployment Architecture
+
+The project now uses GitHub Actions to automate validation and deployment while
+keeping runtime execution entirely on the VPS.
+
+```text
+Developer
+     │
+ git push main
+     │
+     ▼
+GitHub Repository
+     │
+     ▼
+GitHub Actions
+     │
+     ├── CI validation
+     ├── Frontend build verification
+     └── SSH deployment
+            │
+            ▼
+          VPS
+     git pull
+     Build frontend (Docker)
+     Deploy static files
+     Rebuild backend image
+     Restart backend container
+            │
+            ▼
+          Apache
+            │
+            ▼
+          End Users
+```
+
+This architecture provides repeatable deployments, prevents broken frontend
+builds from reaching production, keeps deployment logic under version control,
+and eliminates manual deployment steps while preserving the same Docker- and
+Apache-based runtime architecture described throughout this document.
+

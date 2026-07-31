@@ -52,7 +52,8 @@ id_ed25519*
 id_rsa*
 
 # ── Local secrets folder (root level, never committed) ───────
-Secrets/
+secrets/
 
-# ── Status of builds, etc
-*.txt
+# ── Generated diagnostic reports (throwaway, SAFE_TO_DELETE) ──
+dev_reports/
+

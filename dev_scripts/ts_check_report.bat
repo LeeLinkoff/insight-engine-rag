@@ -100,9 +100,9 @@ REM 5. Automatically open the report in Notepad.
 REM
 REM ============================================================================
 
-set "ROOT=%~dp0"
+set "ROOT=%~dp0..\"
 set "BACKEND=%ROOT%backend"
-set "REPORT=%ROOT%ts_check_report-SAFE_TO_DELETE.txt"
+set "REPORT=%ROOT%dev_reports\ts_check_report-SAFE_TO_DELETE.txt"
 set "STARTTIME=%TIME%"
 
 if not exist "%BACKEND%" (

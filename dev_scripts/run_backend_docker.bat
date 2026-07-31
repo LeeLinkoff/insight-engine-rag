@@ -5,12 +5,10 @@ REM  Builds and runs the backend the same way it runs in
 REM  production, inside Docker, rather than directly with
 REM  `node server.js`. Checks Docker Desktop is running first
 REM  and starts it automatically if not.
-REM  Place this file in the project root, next to backend\.
+REM  Lives in dev_scripts\, backend\ is one level up.
 REM ============================================================
 
-cd /d %~dp0
-
-call start_docker.bat
+call "%~dp0start_docker.bat"
 if errorlevel 1 (
     echo.
     echo Docker did not start successfully, aborting.
@@ -18,7 +16,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-cd /d %~dp0backend
+cd /d %~dp0..\backend
 
 if not exist ".env" (
     echo.

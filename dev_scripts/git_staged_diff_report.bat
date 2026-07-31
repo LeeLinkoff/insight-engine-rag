@@ -9,7 +9,7 @@ REM  For UNSTAGED changes instead, use git_diff_report.bat.
 REM  Place this file anywhere inside the git repo.
 REM ============================================================
 
-cd /d %~dp0
+cd /d %~dp0..
 
 git rev-parse --is-inside-work-tree >nul 2>&1
 if errorlevel 1 (
@@ -19,7 +19,9 @@ if errorlevel 1 (
     exit /b 1
 )
 
-set "REPORT=%~dp0staged-diffs-SAFE_TO_DELETE.txt"
+set "REPORT=%~dp0..\dev_reports\staged-diffs-SAFE_TO_DELETE.txt"
+
+if not exist "%~dp0..\dev_reports" mkdir "%~dp0..\dev_reports"
 
 echo Writing staged diffs to %REPORT% ...
 git diff --cached -- . ":(exclude)Secrets" > "%REPORT%" 2>&1
