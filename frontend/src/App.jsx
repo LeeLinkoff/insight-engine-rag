@@ -1,58 +1,21 @@
-import React, { useState } from 'react'
 import * as Tabs from '@radix-ui/react-tabs'
-import AboutCard from './AboutCard.jsx'
-import PageUrlCard from './PageUrlCard.jsx'
-import RoutingErrorNotice from './RoutingErrorNotice.jsx'
-import HighlighterTab from './HighlighterTab.jsx'
-import AskQuestionTab from './AskQuestionTab.jsx'
-import SystemCheckDialog from './SystemCheckDialog.jsx'
-import HowItWorksDialog from './HowItWorksDialog.jsx'
+import React, { useState } from 'react'
+
+import AboutCard from './components/AboutCard.jsx'
+import PageUrlCard from './components/PageUrlCard.jsx'
+import RoutingErrorNotice from './components/RoutingErrorNotice.jsx'
+import HighlighterTab from './components/HighlighterTab.jsx'
+import AskQuestionTab from './components/AskQuestionTab.jsx'
+import SystemCheckDialog from './components/SystemCheckDialog.jsx'
+import HowItWorksDialog from './components/HowItWorksDialog.jsx'
+import ErrorDialog from './components/ErrorDialog.jsx'
+import ConfirmClearDialog from './components/ConfirmClearDialog.jsx'
+import SuccessDialog from './components/SuccessDialog.jsx'
+
 import './App.css'
 
-// VITE_API_BASE lets us point the frontend at different backends without touching code.
-// In production this is empty (blank string) because Apache proxies /api/* on the same origin.
-// In local dev, set it to http://localhost:3001 in .env.local so the frontend hits the local Express server.
-const API_BASE = import.meta.env.VITE_API_BASE;
+import {API_BASE_ERROR, buildHighlightProxyUrl, apiIngestUrl, apiGetHealth, apiRunQuery, apiClearStore} from './api/client.js'
 
-// Guards against a whole class of bug: if VITE_API_BASE was never set
-// (e.g. no .env.local in dev), API_BASE is `undefined`, and every URL
-// built from it silently contains the literal text "undefined" instead
-// of throwing, so requests fail in a confusing way with no clear signal.
-// Checked once here rather than re-validated on every prox() call.
-const API_BASE_ERROR = (typeof API_BASE === 'undefined')
-  ? {
-      message: 'The frontend doesn\u2019t know where the backend is running, so links like "Open highlighted" would build a broken URL instead of a real one.',
-      details:
-        'VITE_API_BASE is undefined.\n\n' +
-        'Fix: create frontend/.env.local with:\n' +
-        '  VITE_API_BASE=http://localhost:3001\n\n' +
-        'Then restart the dev server (Vite only reads .env.local on startup).'
-    }
-  : null;
-
-// Wraps every backend call with retry logic.
-// The core problem this solves: on first load, the backend may be cold (Docker just started,
-// OpenAI connection not yet warmed). A single fetch attempt would fail and show an error.
-// Instead, we retry up to 5 times with 3-second gaps before giving up.
-// Retries also fire on empty body responses, not just thrown network errors — that was the
-// real failure mode that caused false "server not running" errors on slow ingest calls.
-// Returns a response-like object with text() and json() so callers don't need to change.
-async function fetchWithRetry(url, options = {}, retries = 5, delayMs = 3000) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      const r = await fetch(url, options)
-      const text = await r.text()
-      if (!text) {
-        if (i < retries - 1) { await new Promise(res => setTimeout(res, delayMs)); continue }
-        throw new Error('Empty response after retries')
-      }
-      return { ok: r.ok, status: r.status, text: async () => text, json: async () => JSON.parse(text) }
-    } catch (e) {
-      if (i < retries - 1) { await new Promise(res => setTimeout(res, delayMs)) }
-      else { throw e }
-    }
-  }
-}
 
 // App owns all shared state and the handlers that talk to the backend.
 // Everything visual is delegated to child components (About/PageUrl cards,
@@ -72,7 +35,8 @@ export default function App() {
   // ── UI state ──────────────────────────────────────────────────────────────
   const [activeBtn, setActiveBtn] = useState(null)       // Tracks which button is mid-click for the flash effect
   const [ingested, setIngested] = useState(false)        // Gates the Ask button — user must load a page first
-  const [status, setStatus] = useState('')               // Single status line shown below the action buttons
+  const [ingestStatus, setIngestStatus] = useState('')   // Status line shown in PageUrlCard, for load-page actions only
+  const [queryStatus, setQueryStatus] = useState('')     // Status line shown in AskQuestionTab, for ask-question actions only
   const [answer, setAnswer] = useState('')               // The grounded answer returned from the RAG query
   const [sources, setSources] = useState([])             // Ranked source chunks that backed the answer
   const [safety, setSafety] = useState(null)              // Moderation result for the last answer: { flagged, categories }
@@ -80,17 +44,17 @@ export default function App() {
   const [health, setHealth] = useState(null)             // Raw health check payload from the backend
   const [healthDialogOpen, setHealthDialogOpen] = useState(false)
   const [instructionsOpen, setInstructionsOpen] = useState(false) // Gates the "How it works" detailed instructions dialog
-
+  const [errorDialogOpen, setErrorDialogOpen] = useState(false)
+  const [errorMessage, setErrorMessage] = useState('')
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false)
+  const [successDialogOpen, setSuccessDialogOpen] = useState(false)
+  const [successMessage, setSuccessMessage] = useState('')
+  
   // Builds the highlight proxy URL for a given source URL and query string.
   // The proxy fetches the original page server-side, injects the highlighter script,
-  // and serves the result back so the browser can render it inside an iframe.
-  // This sidesteps CORS and CSP restrictions that would block a direct iframe embed.
   // Returns null if API_BASE is misconfigured, rather than a broken URL containing
   // the literal text "undefined" — callers check for null and bail out gracefully.
-  const prox = (u, query) => {
-    if (API_BASE_ERROR) return null
-    return `${API_BASE}/api/highlight-proxy?url=${encodeURIComponent(u)}&q=${encodeURIComponent(query)}`
-  }
+  const prox = (u, query) => buildHighlightProxyUrl(u, query)
 
   // Gives buttons a brief dark flash on click for tactile feedback.
   // Purely cosmetic — makes the UI feel snappy and responsive.
@@ -100,6 +64,14 @@ export default function App() {
     setTimeout(() => setActiveBtn(null), 150)
   }
 
+  // Sets a success message and opens the success dialog. Mirrors showError
+  // below, used for actions like Clear Store where a small inline status
+  // line could easily go unnoticed.
+  function showSuccess(message) {
+    setSuccessMessage(message)
+    setSuccessDialogOpen(true)
+  }
+  
   // Returns the correct CSS class for a button, injecting the active flash class
   // when that button is the one currently being clicked.
   function btnClass(id, variant = 'secondary') {
@@ -107,6 +79,12 @@ export default function App() {
     return activeBtn === id ? `${base} btn-active` : base
   }
 
+   // Sets an error message and opens error dialog. Mirrors showSuccess above.
+  function showError(message) {
+    setErrorMessage(message)
+    setErrorDialogOpen(true)
+  }
+  
   // ── Ingest ────────────────────────────────────────────────────────────────
   // Sends the target URL to the backend for fetch, parse, chunk, and embed.
   // The backend fetches the page with Axios, extracts readable text with Cheerio,
@@ -114,22 +92,12 @@ export default function App() {
   // batch embedding call. This used to be 33 serial calls — now it's 1.
   // On success, unlocks the Ask button via setIngested(true).
   async function ingestUrl() {
-    if (!url) { setStatus('Enter a URL'); return }
-    setStatus('Ingesting…'); setAnswer(''); setSources([]); setSafety(null); setSourceDiversity(null)
-    try {
-      const r = await fetchWithRetry('/api/ingest-urls', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ urls: [url] })
-      })
-      const text = await r.text()
-      if (!text) { setStatus('Load failed: no response from server. Is the backend running?'); return }
-      let j
-      try { j = JSON.parse(text) } catch { setStatus('Load failed: invalid response from server'); return }
-      if (!j.ok) { setStatus(`Load failed: ${j.error || 'unknown error'}`); return }
-      setIngested(true)
-      setStatus(`Page loaded successfully — ${j.chunks_added} section${j.chunks_added !== 1 ? 's' : ''} indexed`)
-    } catch (e) { setStatus(`Ingest error: ${e?.message || e}`) }
+    if (!url) { setIngestStatus('Enter a URL'); return }
+    setIngestStatus('Ingesting…'); setAnswer(''); setSources([]); setSafety(null); setSourceDiversity(null)
+    const result = await apiIngestUrl(url)
+    if (!result.ok) { setIngestStatus(''); showError(result.message); return }
+    setIngested(true)
+    setIngestStatus(`Page loaded successfully — ${result.chunksAdded} section${result.chunksAdded !== 1 ? 's' : ''} indexed`)
   }
 
   // ── Health Check ──────────────────────────────────────────────────────────
@@ -138,14 +106,33 @@ export default function App() {
   // The dialog distinguishes between "running but empty" and "running with data" —
   // a subtle but important difference when diagnosing why Ask returns nothing.
   async function getHealth() {
-    try {
-      const r = await fetchWithRetry('/api/health')
-      const j = await r.json()
-      setHealth(j)
-      setHealthDialogOpen(true)
-    } catch (e) { setStatus(`System check error: ${e?.message || e}`) }
+    const result = await apiGetHealth()
+    if (!result.ok) { showError(result.message); return }
+    setHealth(result.data)
+    setHealthDialogOpen(true)
   }
 
+  // ── Clear Store ──────────────────────────────────────────────────────────
+  // Opens a confirm dialog before wiping the backend's in-memory vector
+  // store, since it's destructive and can't be undone without re-ingesting
+  // every page.
+  function clearStore() {
+    setConfirmClearOpen(true)
+  }
+
+  // Actually performs the clear, called only after the user confirms via
+  // ConfirmClearDialog. Resets ingested/answer/sources state back to empty
+  // so the UI doesn't keep showing results for content that's now gone from
+  // the backend, then surfaces the result via the success or error dialog.
+  async function doClearStore() {
+    const result = await apiClearStore()
+    if (!result.ok) { showError(result.message); return }
+    setIngested(false)
+    setAnswer(''); setSources([]); setSafety(null); setSourceDiversity(null)
+    setIngestStatus('')
+    showSuccess(`Store cleared — ${result.clearedChunks} chunk${result.clearedChunks !== 1 ? 's' : ''} removed`)
+  }
+  
   // ── RAG Query ─────────────────────────────────────────────────────────────
   // Embeds the question on the backend, runs cosine similarity against all stored
   // chunks, assembles the top 4 into a CONTEXT block, and asks GPT-4o-mini to
@@ -154,48 +141,42 @@ export default function App() {
   // used internally for source attribution) so the user sees clean prose.
   // Sources are rendered separately with relevance scores and direct highlight links.
   async function runQuery() {
-    if (!question) { setStatus('Enter a question'); return }
-    setStatus('Searching…'); setAnswer(''); setSources([]); setSafety(null); setSourceDiversity(null)
-    try {
-      const r = await fetchWithRetry('/api/query', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ question, topK: 4 })
-      })
-      const text = await r.text()
-      if (!text) { setStatus('Search failed: no response from server. Is the backend running?'); return }
-      let j
-      try { j = JSON.parse(text) } catch { setStatus('Search failed: invalid response from server'); return }
-      if (!j.ok) { setStatus(`Search failed: ${j.error || 'unknown error'}`); return }
-      const cleaned = (j.answer || '').replace(/\[\d+\|[^\]]*\]/g, '').trim()
-      setAnswer(cleaned); setSources(Array.isArray(j.sources) ? j.sources : [])
-      // safety and source_diversity are only present once the moderation
-      // and diversity checks were added server-side; guard with || null so
-      // older backend responses without these fields don't break the UI.
-      setSafety(j.safety || null)
-      setSourceDiversity(j.source_diversity || null)
-      setStatus('Results ready')
-    } catch (e) { setStatus(`Query error: ${e?.message || e}`) }
+    if (!question) { setQueryStatus('Enter a question'); return }
+    setQueryStatus('Searching…'); setAnswer(''); setSources([]); setSafety(null); setSourceDiversity(null)
+    const result = await apiRunQuery(question)
+    if (!result.ok) { setQueryStatus(''); showError(result.message); return }
+    setAnswer(result.answer); setSources(result.sources)
+    setSafety(result.safety)
+    setSourceDiversity(result.sourceDiversity)
+    setQueryStatus('Results ready')
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
-  // Layout: About card, single URL input shared across both tabs, then a
-  // tabbed interface (Highlighter / Ask a Question), then two dialogs
-  // (System Check, How It Works) mounted at the end so they can be opened
-  // from anywhere in the tree above.
+  // Layout: System Check / Clear Store buttons, About card, single URL input
+  // shared across both tabs, then a tabbed interface (Highlighter / Ask a
+  // Question), then five dialogs (System Check, How It Works, Error, Confirm
+  // Clear, Success) mounted at the end so they can be opened from anywhere
+  // in the tree above.
   return (
     <div className="rag-grid">
 
       <h2 className="rag-title" style={{ textAlign: 'center' }}>Insight Engine</h2>
 
-      {/* System Check lives here, centered right below the title, since it's
-          a whole-app/system-level action, not specific to a page or a question. */}
-      <div style={{ display: 'flex', justifyContent: 'center', marginTop: -8 }}>
+      {/* System Check and Clear Store both live here, centered right below
+          the title, since they're whole-app/system-level actions, not
+          specific to a page or a question. Clear Store wipes the backend's
+          in-memory vector store, necessary because the store has no
+          persistence and no other reset path short of restarting the server,
+          which isn't practical for someone actually using the app. */}
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: -8 }}>
         <button className={btnClass('health', 'secondary')} onClick={() => flash('health', getHealth)}>
           System Check
         </button>
+        <button className={btnClass('clear', 'secondary')} onClick={() => flash('clear', clearStore)}>
+          Clear Store
+        </button>
       </div>
-
+	  
       {API_BASE_ERROR && (
         <RoutingErrorNotice message={API_BASE_ERROR.message} details={API_BASE_ERROR.details} />
       )}
@@ -207,7 +188,7 @@ export default function App() {
         onChange={e => setUrl(e.target.value)}
         onLoadPage={() => flash('ingest', ingestUrl)}
         loadBtnClass={btnClass('ingest', 'primary')}
-        loadStatus={status}
+        loadStatus={ingestStatus}
       />
 
       <Tabs.Root defaultValue="highlighter" className="rag-tabs-root">
@@ -236,7 +217,7 @@ export default function App() {
             setQuestion={setQuestion}
             runQuery={runQuery}
             ingested={ingested}
-            status={status}
+            status={queryStatus}
             btnClass={btnClass}
             flash={flash}
             answer={answer}
@@ -250,10 +231,16 @@ export default function App() {
 
       </Tabs.Root>
 
-      <SystemCheckDialog open={healthDialogOpen} onOpenChange={setHealthDialogOpen} health={health} />
-
+	  {/* Dialogs mounted at the end, outside the main layout flow, so they
+          can be opened from anywhere in the tree above regardless of which
+          tab or card triggered them. Each is fully controlled by its own
+          open/onOpenChange state, rendering nothing when closed. */}
+	  <SystemCheckDialog open={healthDialogOpen} onOpenChange={setHealthDialogOpen} health={health} />
       <HowItWorksDialog open={instructionsOpen} onOpenChange={setInstructionsOpen} />
-
+      <ErrorDialog open={errorDialogOpen} onOpenChange={setErrorDialogOpen} message={errorMessage} />
+      <ConfirmClearDialog open={confirmClearOpen} onOpenChange={setConfirmClearOpen} onConfirm={doClearStore} />
+      <SuccessDialog open={successDialogOpen} onOpenChange={setSuccessDialogOpen} message={successMessage} />
+ 
     </div>
   )
 }

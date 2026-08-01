@@ -1,14 +1,21 @@
-# Insight Engine: Retrieval-Augmented Generation (RAG) MVP
+# Insight Engine
+### A Retrieval-Augmented Generation (RAG) MVP
 
 A fully custom RAG pipeline with a source-highlighting proxy, built from scratch. No frameworks, no wrappers, no vibe-coded shortcuts.
+
+---
 
 ## What It Does
 
 Insight Engine lets you ingest any public web page and ask questions about it. The system retrieves the most relevant content, generates a grounded answer with citations, and lets you verify every answer against the original source with one click.
 
+---
+
 ## Live MVP
 
 [https://leelinkoff.com/mvps/rag/](https://leelinkoff.com/mvps/rag/)
+
+---
 
 ## Core Features
 
@@ -71,9 +78,13 @@ An interactive Swagger UI, generated from a static OpenAPI 3.0 spec (`swagger-sp
 - Restart-safe Docker containerization with environment variable isolation
 - Apache reverse proxy for clean routing, no CORS issues, and no public port exposure
 
+---
+
 ## Project Structure
 
 See `DEPLOYMENT_AND_ARCHITECTURE.md` for full directory layout and VPS path details.
+
+---
 
 ## Architecture
 
@@ -87,11 +98,13 @@ See `DEPLOYMENT_AND_ARCHITECTURE.md` for full directory layout and VPS path deta
 3. Top chunks plus the question are sent to GPT-4o-mini. Answer returned with bracket citations.
 4. User clicks a citation. Backend proxy fetches the source page, injects highlight script, scrolls to the relevant passage.
 
-## Why the Vector Store Exists: What OpenAI Cannot Do Alone
+---
+
+## Why the Vector Store Exists (What OpenAI Cannot Do Alone)
 
 The OpenAI chat completion API is stateless. It has no knowledge of your content. Every request starts from zero. The only option the raw API gives you is to paste content directly into the prompt on every request. That breaks down immediately: pages exceed the context window, costs scale with content size, and accuracy degrades when GPT has to sift through large blocks of irrelevant text to find the answer.
 
-The vector store solves this by separating two distinct problems: relevancy and reasoning.
+The vector store solves this by separating two distinct problems, relevancy and reasoning.
 
 **At ingest time**, the backend fetches and parses the target page, splits it into chunks, and sends each chunk to OpenAI's embedding model. The model returns a vector (an array of numbers representing the semantic meaning of that chunk). All vectors are stored in memory alongside their source text.
 
@@ -103,6 +116,8 @@ Cosine similarity is used rather than keyword matching because it operates on me
 
 The vector store lives in process memory by design. It is fast and requires no external infrastructure for an MVP. The trade-off is that content must be re-ingested after a container restart. Production hardening would persist embeddings to a dedicated vector database such as Pinecone or pgvector.
 
+---
+
 ## Known Issues Found & Fixed
 
 Both of these surfaced during real testing, not code review, and are documented here rather than quietly patched over:
@@ -110,14 +125,28 @@ Both of these surfaced during real testing, not code review, and are documented 
 - **Source ID collision.** URLs sharing a long common prefix (e.g. two Wikipedia pages under `/wiki/`) were silently assigned identical internal source IDs, because the ID was a truncated base64 encoding of the URL that only captured the first 9 bytes. Two genuinely different ingested pages were merging into one source in the vector store without any error. Fixed by hashing the full URL (SHA-256) instead of truncating a prefix.
 - **Empty-chunk ingestion crash.** The chunking function could emit a whitespace-only chunk when a sentence ended right at the chunk-size boundary and was immediately followed by a long run of text with no period in it (common in citation/reference blocks). That empty string was rejected outright by OpenAI's embeddings API, crashing ingestion for the affected page. Fixed by guarding the chunk-flush condition against whitespace-only buffers and filtering any empty chunks that slip through regardless.
 
+---
+
 ## Continuous Integration & Deployment
 
 - **CI** (`.github/workflows/ci.yml`): on every push/PR, syntax-checks the JavaScript files, type-checks the TypeScript files under `strict: true`, and runs the eval harness against a live boot of the server (skipped on forked PRs, which never receive the required `OPENAI_API_KEY` secret).
 - **CD** (`.github/workflows/deploy.yml`): on push to `main`, first verifies the frontend actually builds cleanly on GitHub's own runner (fails fast, touches the VPS not at all), then only if that passes, syncs source to the VPS, rebuilds the backend container, rebuilds the frontend inside a throwaway Docker container on the VPS itself, deploys it to Apache, and verifies `/api/health` responds through the public domain. Deployment used to be a fully manual SSH process (still documented in `DEPLOYMENT_AND_ARCHITECTURE.md` for reference); it's automated now.
 
+---
+
 ## Local Development Tooling
 
 Two folders exist locally that are never uploaded to the VPS and aren't part of the deployed application: `dev_scripts/` (batch scripts automating local dev, build, Docker, and git/TypeScript diagnostic workflows) and `dev_reports/` (the output of those scripts, e.g. `ts_check_report-SAFE_TO_DELETE.txt`, `staged-diffs-SAFE_TO_DELETE.txt`). Both are tracked in git for portability across machines, but neither appears anywhere in the VPS deployment steps, consistent with `DEPLOYMENT_AND_ARCHITECTURE.md` section 1.2's upload table, which only lists `frontend/` and `backend/`.
+
+---
+
+## Secrets & Git Hygiene
+
+A `secrets/` folder exists at the project root holding `openai_key.txt`, a plain-text reference copy of the OpenAI API key kept for quick lookup during local development. It is never read by the running application, which pulls the key from environment variables (`.env` / `backend/.env`) at runtime. `secrets/` is excluded via the root `.gitignore` and is never committed.
+
+**Single root `.gitignore` by design.** Despite the project being split into `frontend/` and `backend/` folders, a single `.gitignore` at the repo root covers both, rather than maintaining a separate `.gitignore` in each. `backend/.gitignore` and `frontend/.gitignore` previously existed and were identical to each other and fully redundant against the root file (same `node_modules`, `.env`, `dist`, and log patterns, just duplicated). They were removed in favor of one consolidated file, since per-folder gitignores added no coverage the root file didn't already provide and only created a second place to keep in sync.
+
+---
 
 ## Tech Stack
 
@@ -135,13 +164,17 @@ Two folders exist locally that are never uploaded to the VPS and aren't part of 
 | Web server | Apache with mod_proxy |
 | Deployment | Bluehost VPS |
 
+---
+
 ## Code Quality
 
 Every function, endpoint, and architectural decision is documented inline. The server.js opens with a full architectural overview covering endpoints, model choices, tradeoff analysis on the in-memory vector store, and production hardening guidance. New developers can orient themselves without asking a single question.
 
-Type-checked TypeScript versions of the backend (`server.ts`, `evals.ts`, `highlight-safe.ts`, `swagger-spec.ts`) are maintained alongside the JavaScript originals, compiling cleanly under `strict: true`. The frontend follows the same documentation discipline as the backend: each component file states not just what it renders but why it exists as a separate file (see `Modular Frontend Architecture` above).
+Type-checked TypeScript versions of the backend (`server.ts`, `evals.ts`, `highlight-safe.ts`, `swagger-spec.ts`) are maintained alongside the JavaScript originals, compiling cleanly under `strict: true`. The frontend follows the same documentation discipline as the backend.  Each component file states not just what it renders but why it exists as a separate file (see `Modular Frontend Architecture` above). Secrets are isolated the same way. A single root-level `.gitignore` (see `Secrets & Git Hygiene` below) rather than duplicated per-folder files is a deliberate consistency decision, not an oversight.
 
 See `DEPLOYMENT_AND_ARCHITECTURE.md` for the full deployment guide including VPS environment constraints, Docker build process, Apache configuration, and security notes.
+
+---
 
 ## What This Is Not
 
@@ -151,6 +184,8 @@ See `DEPLOYMENT_AND_ARCHITECTURE.md` for the full deployment guide including VPS
 - Not deployed on a clean server with everything pre-installed
 
 This was built locally, then deployed on a VPS with a broken Node environment, missing system libraries, and no native build capability. Every constraint was diagnosed and solved with a real engineering decision.
+
+---
 
 ## Author
 

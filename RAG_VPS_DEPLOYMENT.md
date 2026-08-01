@@ -60,6 +60,8 @@ PORT=3001
 
 The moderation check run on every generated answer uses this same `OPENAI_API_KEY` via OpenAI's moderation endpoint. No additional environment variables are required to support it.
 
+**Note:** rotating this key is now automated. Update the `OPENAI_API_KEY` GitHub Actions secret, and the next deploy writes it here automatically, see `DEPLOYMENT_AND_ARCHITECTURE.md` section 1.6 for the full mechanism and manual fallback.
+
 ### Verification
 
 ```bash

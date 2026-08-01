@@ -139,7 +139,11 @@ Must return the same JSON as above. If this fails but the direct curl in Step 2 
 
 ## 1.6 Rotating the OpenAI API Key
 
-When the API key changes, the running container must be replaced. The image does not need to be rebuilt. Only the container needs to restart, because the key is injected at `docker run` time via `--env-file`, not baked into the image.
+**This is now automated.** Rotate the key in exactly one place, the `OPENAI_API_KEY` GitHub Actions repository secret (Settings → Secrets and variables → Actions). The next push to `main` (or a manual `workflow_dispatch` run) writes the new key into `/opt/rag/backend/.env` on the VPS and restarts the container automatically, see the "Write backend .env from GitHub Secrets" step in `.github/workflows/deploy.yml`.
+
+**Do not edit `/opt/rag/backend/.env` directly on the VPS.** That step in the pipeline overwrites the file on every deploy, so a manual edit only lasts until the next push, and creates a false sense that the key was rotated when it will silently revert.
+
+The steps below are the manual fallback only, for debugging the pipeline itself or if GitHub Actions is unavailable.
 
 ### Step 1: Edit the .env file
 
@@ -162,6 +166,8 @@ Update the `OPENAI_API_KEY` line. Save and exit (`Ctrl+O`, `Enter`, `Ctrl+X`).
     curl http://127.0.0.1:3001/api/health
 
 Must return `{"ok":true,"chunks":0,"sources":{}}`. If it does, the container is up and using the new key.
+
+**Reminder:** this manual change will be overwritten on the next automated deploy. If you rotate the key this way, also update the `OPENAI_API_KEY` GitHub secret to match, or the next push will revert it.
 
 ---
 

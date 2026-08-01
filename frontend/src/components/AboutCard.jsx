@@ -21,6 +21,13 @@ export default function AboutCard({ onShowInstructions }) {
         multiple pages are loaded, in case the question only matched one of them. You&rsquo;ll
         see a banner if either check flags something, otherwise both passed silently.
       </p>
+	  <p style={{ margin: '0 0 14px 0', fontSize: 13, color: '#4b5563', lineHeight: 1.6 }}>
+        Every answer runs through two automatic checks first: a content safety review, and a
+        source-diversity check that flags answers grounded in only one document, even if
+        multiple pages are loaded, in case the question only matched one of them. You&rsquo;ll
+        see a banner if either check flags something, otherwise both passed silently. Use{' '}
+        <strong>Clear Store</strong> at any point to wipe everything you've loaded and start fresh.
+      </p>	  
       <div style={{ display: 'flex', justifyContent: 'center' }}>
         <button className="btn-primary" onClick={onShowInstructions}>
           How It Works

@@ -129,6 +129,29 @@ jobs:
       # GitHub Secrets, the next deploy pushes it to the VPS automatically.
       # rsync above deliberately excludes .env so this is the only place
       # that writes it, no risk of the two conflicting.
+      #
+      # Security note (deliberate tradeoff, not an oversight):
+      # - The key ends up in plaintext in backend/.env on the VPS. This is
+      #   inherent to dotenv + Docker --env-file, not something this step
+      #   introduces; a secrets manager (Vault, AWS Secrets Manager, Docker
+      #   secrets) would avoid it but is disproportionate infrastructure
+      #   for a key that never touches sensitive data, only RAG completions
+      #   and embeddings against public web pages.
+      # - The secret is interpolated directly into the SSH command string
+      #   below rather than piped via stdin or transferred as a file.
+      #   GitHub Actions masks known secret values in its own log output,
+      #   so this doesn't print in plaintext there, but it does mean the
+      #   value briefly exists as literal text in the command rather than
+      #   being isolated from it. Accepted here to keep the deploy pipeline
+      #   at a single touch point for key rotation (see above); revisit
+      #   only if this key's blast radius changes.
+      - name: Write backend .env from GitHub Secrets
+        run: |
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" '
+            set -e
+            echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" > "${{ secrets.VPS_PROJECT_PATH }}/backend/.env"
+            echo "PORT=3001" >> "${{ secrets.VPS_PROJECT_PATH }}/backend/.env"
+          '
       - name: Write backend .env from GitHub Secrets
         run: |
           ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" '

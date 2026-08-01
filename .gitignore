@@ -7,6 +7,7 @@ frontend/node_modules/
 .env
 .env.local
 .env.*.local
+.env.production
 backend/.env
 frontend/.env.local
 
@@ -21,9 +22,12 @@ frontend/build/
 
 # ── Logs ──────────────────────────────────────────────────────
 *.log
+logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 server.log
 
 # ── OS files ──────────────────────────────────────────────────
@@ -57,3 +61,12 @@ secrets/
 # ── Generated diagnostic reports (throwaway, SAFE_TO_DELETE) ──
 dev_reports/
 
+
+# ── Misc
+*.bak
+*.BAK
+*_bak
+*_BAK
+
+dist-ssr/
+*.local

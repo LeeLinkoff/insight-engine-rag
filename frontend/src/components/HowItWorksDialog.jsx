@@ -61,10 +61,16 @@ export default function HowItWorksDialog({ open, onOpenChange }) {
                 </InstructionStep>
               </InstructionSection>
 
-              <InstructionSection label="System Check">
+			  <InstructionSection label="System Check">
                 <InstructionStep number={1} title="Confirm the backend is ready">
                   Click <strong>System Check</strong> any time to see whether the server is
                   running and how many sections are currently indexed.
+                </InstructionStep>
+                <InstructionStep number={2} title="Start over if needed">
+                  Click <strong>Clear Store</strong> to wipe every page you've loaded so far.
+                  Useful if you want to test with a clean slate, or if the store has content
+                  from earlier testing you don't want influencing new answers. This can't be
+                  undone, you'll need to reload any pages you want to query again afterward.
                 </InstructionStep>
               </InstructionSection>
 

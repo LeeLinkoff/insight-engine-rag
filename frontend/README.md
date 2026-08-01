@@ -12,19 +12,52 @@ The frontend was intentionally designed to remain simple while still following a
 - Predictable one-way data flow
 - Components with one clearly defined responsibility
 - Separation of presentation from orchestration
+- Separation of networking from UI (dedicated API layer)
 - Accessibility by default
 - Minimal coupling between components
 - Straightforward extensibility
 
 ---
 
-# 2. High-Level Architecture
+# 2. Directory Structure
+
+```text
+frontend/src/
+├── api/
+│   └── client.js          (all backend communication)
+├── components/
+│   ├── AboutCard.jsx
+│   ├── AnswerCard.jsx
+│   ├── AskQuestionTab.jsx
+│   ├── ConfirmClearDialog.jsx
+│   ├── ErrorDialog.jsx
+│   ├── HighlightedPreviewCard.jsx
+│   ├── HighlighterTab.jsx
+│   ├── HowItWorksDialog.jsx
+│   ├── InstructionSection.jsx
+│   ├── InstructionStep.jsx
+│   ├── PageUrlCard.jsx
+│   ├── RoutingErrorNotice.jsx
+│   ├── SourcesCard.jsx
+│   ├── SuccessDialog.jsx
+│   └── SystemCheckDialog.jsx
+├── App.jsx
+├── App.css
+├── main.jsx
+└── assets/
+```
+
+`api/` is a dedicated networking layer, separate from `components/`, since backend communication is not a UI concern. `components/` holds every presentation component. `App.jsx` and `main.jsx` stay at the `src/` root as entry points.
+
+---
+
+# 3. High-Level Architecture
 
 ```text
 Browser
     │
     ▼
- App.jsx
+ App.jsx ──── api/client.js (backend communication)
     │
  ├───────────────┐
  │               │
@@ -44,16 +77,19 @@ Highlighter   Ask Question
 
 Dialogs
  ├─ SystemCheckDialog
+ ├─ ErrorDialog
+ ├─ ConfirmClearDialog
+ ├─ SuccessDialog
  └─ HowItWorksDialog
       ├─ InstructionSection
       └─ InstructionStep
 ```
 
-`App.jsx` owns the application's shared state and backend communication. Every other component has a focused responsibility.
+`App.jsx` owns the application's shared state and calls into `api/client.js` for all backend communication. Every other component has a focused presentation responsibility.
 
 ---
 
-# 3. State Management Philosophy
+# 4. State Management Philosophy
 
 The application intentionally keeps shared state inside `App.jsx` rather than introducing Redux, Zustand, MobX, or global Context.
 
@@ -77,13 +113,19 @@ This provides one source of truth, predictable rendering, easier debugging, and 
 
 ---
 
-# 4. Component Responsibilities
+# 5. Component Responsibilities
 
 ## App.jsx
 - Owns shared application state
-- Coordinates backend communication
+- Calls into `api/client.js` for backend communication
 - Manages loading and error state
 - Passes data to presentation components
+
+## api/client.js
+- Owns all backend communication (ingest, query, health, clear)
+- Builds the highlight proxy URL
+- Exposes `API_BASE_ERROR` for routing misconfiguration
+- Has no knowledge of UI state or rendering
 
 ## AboutCard
 Introduces the application and links to detailed documentation.
@@ -109,6 +151,15 @@ Displays highlighted evidence returned by the proxy endpoint.
 ## SystemCheckDialog
 Performs backend health verification before use.
 
+## ErrorDialog
+Shows a warning-icon modal whenever a backend call fails (ingest, query, health, or clear), rather than surfacing failures only as an easy-to-miss inline status line.
+
+## ConfirmClearDialog
+Gates the destructive Clear Store action behind an explicit confirm/cancel step, replacing the native browser `confirm()` dialog so the app stays visually consistent instead of exposing the raw origin/port.
+
+## SuccessDialog
+Shows a success-icon modal for actions like Clear Store, where a small inline status line could easily go unnoticed.
+
 ## HowItWorksDialog
 Provides a detailed walkthrough.
 
@@ -117,19 +168,18 @@ Reusable instructional components.
 
 ---
 
-# 5. Backend Communication
+# 6. Backend Communication
 
-Only `App.jsx` communicates directly with the backend.
+All backend communication is isolated to `api/client.js`. `App.jsx` is the only component that imports from it; presentation components remain unaware of networking details entirely.
 
 - POST `/api/ingest-urls`
 - POST `/api/query`
 - GET `/api/health`
-
-Presentation components remain unaware of networking details.
+- DELETE `/api/clear`
 
 ---
 
-# 6. User Interaction Lifecycle
+# 7. User Interaction Lifecycle
 
 ```text
 User enters URL
@@ -155,7 +205,7 @@ Evidence highlighted
 
 ---
 
-# 7. Error Handling
+# 8. Error Handling
 
 The frontend explicitly handles:
 
@@ -169,13 +219,13 @@ The frontend explicitly handles:
 
 ---
 
-# 8. Accessibility
+# 9. Accessibility
 
 Radix UI provides accessible dialogs and tabs, including keyboard navigation, focus management, and screen-reader-friendly behavior.
 
 ---
 
-# 9. Extensibility
+# 10. Extensibility
 
 The architecture supports future additions including:
 
@@ -186,24 +236,26 @@ The architecture supports future additions including:
 - Streaming responses
 - Additional document sources
 - User workspaces
+- Additional API modules under `api/` (e.g. splitting `client.js` into `client.js` + `endpoints.js` as the surface area grows)
 
 ---
 
-# 10. Architectural Tradeoffs
+# 11. Architectural Tradeoffs
 
 - Centralized state keeps behavior predictable.
 - Props make dependencies explicit.
 - Radix UI provides mature accessibility primitives.
 - Presentation remains separate from orchestration.
+- A dedicated `api/` folder keeps networking swappable and testable independent of UI code.
 
 ---
 
-# 11. Evolution
+# 12. Evolution
 
-The project evolved from a large `App.jsx` into focused components with clear responsibilities, improving maintainability, extensibility, and readability.
+The project evolved from a large `App.jsx` into focused components with clear responsibilities, and from a flat `src/` directory into a structure with dedicated `api/` and `components/` folders, improving maintainability, extensibility, and readability.
 
 ---
 
-# 12. Conclusion
+# 13. Conclusion
 
 The frontend emphasizes clear ownership, predictable state management, separation of concerns, accessibility, and extensibility. Although built as an MVP, its architecture follows engineering practices intended to support future growth without major restructuring.
