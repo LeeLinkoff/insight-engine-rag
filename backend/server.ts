@@ -224,6 +224,31 @@ const CHAT_MODEL = 'gpt-4o-mini';
 // WARNING: this resets every time the server restarts. Not for production use.
 const store: StoredChunk[] = [];
 
+// ─── Shared Browser Headers ───────────────────────────────────────────────────
+// Used by both fetchHtmlTextCheerio (ingest) and the highlight proxy fetch.
+// Kept as one constant so the two never silently drift apart.
+const BROWSER_HEADERS: Record<string, string> = {
+  'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36',
+  'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'accept-language': 'en-US,en;q=0.9',
+  'cache-control': 'no-cache',
+  'pragma': 'no-cache'
+};
+
+// ─── Error Response Helper ─────────────────────────────────────────────────
+// Standardizes the "log + 500 JSON" pattern repeated across ingest/query routes.
+function sendError(res: Response, label: string, e: any): void {
+  console.error(label + ' ERROR:', e);
+  res.status(500).json({ ok: false, error: e.message || String(e) });
+}
+
+// ─── Meta Field Helper ─────────────────────────────────────────────────────
+// Small null-safe accessor for row.meta.<field>, used across query results,
+// health, and debug endpoints instead of repeating the same guard inline.
+function metaField<T = any>(row: { meta?: DocMeta | null }, field: keyof DocMeta, fallback: T): T {
+  return ((row.meta && (row.meta as any)[field]) || fallback) as T;
+}
+
 // ─── Cosine Similarity ────────────────────────────────────────────────────────
 // Measures how semantically close two embedding vectors are.
 // Returns a value between -1 and 1. Above 0.25 is considered a relevant match (see MIN_SIM below).
@@ -331,13 +356,7 @@ async function fetchHtmlTextCheerio(url: string, timeoutMs: number = 8000): Prom
       timeout: timeoutMs,
       maxRedirects: 5,
       responseType: 'text',
-      headers: {
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36',
-        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'accept-language': 'en-US,en;q=0.9',
-        'cache-control': 'no-cache',
-        'pragma': 'no-cache'
-      },
+      headers: BROWSER_HEADERS,
       validateStatus: s => s >= 200 && s < 400
     });
     let html: string = resp.data || '';
@@ -418,8 +437,7 @@ app.post('/api/ingest', async function (req: Request, res: Response) {
     const added = await embedAndStoreDocs(docs);
     res.json({ ok: true, chunks_added: added, total_chunks: store.length });
   } catch (e: any) {
-    console.error('INGEST ERROR:', e);
-    res.status(500).json({ ok: false, error: e.message });
+	sendError(res, 'INGEST', e);
   }
 });
 
@@ -463,8 +481,7 @@ app.post('/api/ingest-urls', async function (req: Request, res: Response) {
       errors
     });
   } catch (e: any) {
-    console.error('INGEST-URLS ERROR:', e);
-    res.status(500).json({ ok: false, error: e.message });
+	sendError(res, 'INGEST-URLS', e);
   }
 });
 
@@ -494,7 +511,7 @@ app.post('/api/query', async function (req: Request, res: Response) {
     const parts: string[] = [];
     for (let i = 0; i < scored.length; i++) {
       const d = scored[i];
-      parts.push('[' + (i + 1) + '|' + (d.meta && d.meta.company ? d.meta.company : 'Unknown') + '|' + d.source_id + '] ' + d.text);
+	  parts.push('[' + (i + 1) + '|' + metaField(d, 'company', 'Unknown') + '|' + d.source_id + '] ' + d.text);
     }
     const context = parts.join('\n\n');
 
@@ -560,18 +577,17 @@ app.post('/api/query', async function (req: Request, res: Response) {
       source_diversity: sourceDiversity,
       sources: scored.map((d, i) => ({
         idx: i + 1,
-        company: (d.meta && d.meta.company) || 'Unknown',
+        company: metaField(d, 'company', 'Unknown'),
         source_id: d.source_id,
-        title: (d.meta && d.meta.title) || null,
-        source_url: (d.meta && d.meta.source_url) || null,
+        title: metaField(d, 'title', null),
+        source_url: metaField(d, 'source_url', null),
         score: Number((d.score || 0).toFixed(4)),
         snippet: d.text.length > 200 ? (d.text.slice(0, 200) + '…') : d.text,
-        text_fragment_urls: buildTextFragmentUrls((d.meta && d.meta.source_url) || null, d.text)
+        text_fragment_urls: buildTextFragmentUrls(metaField(d, 'source_url', null), d.text)
       }))
     });
   } catch (e: any) {
-    console.error('QUERY ERROR:', e);
-    res.status(500).json({ ok: false, error: e.message });
+	sendError(res, 'QUERY', e);
   }
 });
 
@@ -583,7 +599,7 @@ app.post('/api/query', async function (req: Request, res: Response) {
 app.get('/api/health', function (_req: Request, res: Response) {
   const bySource: Record<string, number> = {};
   for (const r of store) {
-    const key = ((r.meta && r.meta.company) || 'Unknown') + '|' + r.source_id;
+	const key = metaField(r, 'company', 'Unknown') + '|' + r.source_id;
     bySource[key] = (bySource[key] || 0) + 1;
   }
   res.json({ ok: true, chunks: store.length, sources: bySource });
@@ -598,12 +614,12 @@ app.get('/api/debug/peek', function (req: Request, res: Response) {
   const rows = store
     .filter(function (r) {
       if (!company) return true;
-      const c = (r.meta && r.meta.company) || 'Unknown';
+	  const c = metaField(r, 'company', 'Unknown');
       return String(c).toLowerCase().indexOf(String(company).toLowerCase()) !== -1;
     })
     .slice(0, limit)
     .map(function (r) {
-      return { company: (r.meta && r.meta.company) || 'Unknown', source_id: r.source_id, title: (r.meta && r.meta.title) || null, snippet: r.text.slice(0, 300) };
+	  return { company: metaField(r, 'company', 'Unknown'), source_id: r.source_id, title: metaField(r, 'title', null), snippet: r.text.slice(0, 300) };
     });
   res.json({ ok: true, count: rows.length, rows });
 });
@@ -647,13 +663,7 @@ app.get('/api/highlight-proxy', async function (req: Request, res: Response) {
       maxRedirects: 5,
       responseType: 'text',
       validateStatus: s => s >= 200 && s < 400,
-      headers: {
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36',
-        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'accept-language': 'en-US,en;q=0.9',
-        'cache-control': 'no-cache',
-        'pragma': 'no-cache'
-      }
+	  headers: BROWSER_HEADERS
     });
 
     const origin = new URL(url).origin + '/'; // Resolve relative asset paths (e.g. Wikipedia /w/load.php)

@@ -15,12 +15,6 @@ export default function AboutCard({ onShowInstructions }) {
         far, and the answer is backed by the exact sections it came from, whether that's one
         page or several.
       </p>
-      <p style={{ margin: '0 0 14px 0', fontSize: 13, color: '#4b5563', lineHeight: 1.6 }}>
-        Every answer runs through two automatic checks first: a content safety review, and a
-        source-diversity check that flags answers grounded in only one document, even if
-        multiple pages are loaded, in case the question only matched one of them. You&rsquo;ll
-        see a banner if either check flags something, otherwise both passed silently.
-      </p>
 	  <p style={{ margin: '0 0 14px 0', fontSize: 13, color: '#4b5563', lineHeight: 1.6 }}>
         Every answer runs through two automatic checks first: a content safety review, and a
         source-diversity check that flags answers grounded in only one document, even if

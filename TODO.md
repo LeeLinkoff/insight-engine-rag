@@ -48,3 +48,45 @@ a second standing credential (`OPENAI_ADMIN_KEY`) and a secret-writing
 PAT sitting in the repo for a job that runs unattended. Revisit this
 decision only if the key's blast radius changes, e.g. if this project
 starts handling real user data or scales beyond an MVP.
+
+## Move API off the domain root for consistency with newer MVPs
+
+**Status:** Not started. Not urgent, nothing is currently broken.
+
+**Context:** insight-engine-rag's Apache config proxies `/api/*` at the
+bare domain root (`ProxyPass "/api/" "http://127.0.0.1:3001/"`), while
+its frontend is scoped under `/mvps/rag/`. This was fine as the only
+MVP on the VPS, but a newer project (`ttb-label-verify`) needed its own
+`/api/*` and had to be nested under `/mvps/label-verify/api/` instead
+to avoid the two `ProxyPass` rules directly colliding, whichever Apache
+rule matches first would win, and the other app's entire API would
+become unreachable.
+
+**Proposed improvement:** move this project's API under its own
+subpath too, `/mvps/rag/api/` instead of the bare `/api/`, so the
+domain root is never claimed by any single project and future MVPs
+never have to think about this collision risk at all.
+
+### What it would touch
+
+1. Apache config: `ProxyPass "/api/" "http://127.0.0.1:3001/"` becomes
+   `ProxyPass "/mvps/rag/api/" "http://127.0.0.1:3001/"` (and the
+   matching `ProxyPassReverse`).
+2. Frontend fetch calls (`fetch('/api/ingest-urls')`, `fetch('/api/query')`,
+   `fetch('/api/health')`, etc.) currently hardcoded as root-relative
+   need to build from a base path instead, same fix already applied in
+   `ttb-label-verify`'s `App.jsx`: derive the API prefix from Vite's
+   `import.meta.env.BASE_URL` rather than hardcoding `/api/...`.
+3. `PUBLIC_HEALTH_URL` (or equivalent) GitHub secret updates to
+   `https://leelinkoff.com/mvps/rag/api/health`.
+4. Any local dev proxy config (`vite.config.js`) needs the matching
+   path + rewrite, so dev keeps working the same way prod will.
+
+### Why this is deferred, not urgent
+
+insight-engine-rag is live and working in production exactly as-is.
+This change is organizational, not a bug fix, nothing is currently
+broken, and touching a working Apache config plus redeploying carries
+real risk of breaking something that currently works for zero
+functional gain today. Worth doing as its own deliberate, tested task,
+not squeezed in alongside unrelated work.
