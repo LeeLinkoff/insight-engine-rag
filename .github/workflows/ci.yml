@@ -148,14 +148,51 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           PORT: 3001
+        # ============================================================
+        # IMPORTANT: setsid and < /dev/null are required for local runs
+        # under act. Do not simplify this back to plain `nohup ... &`.
+        #
+        # act runs every step as its own `docker exec` session. When
+        # the step's shell exits, act tears down that exec session,
+        # and a plain backgrounded child can get killed before it even
+        # performs the `> server.log` redirect. nohup does not protect
+        # it, because the kill can land before nohup has executed.
+        #
+        # Symptom when this breaks (looks unrelated, wastes time):
+        #   - This step "succeeds" in ~150ms
+        #   - Health check fails all 20 attempts
+        #   - cat: server.log: No such file or directory
+        # A missing server.log is the tell. If the server had actually
+        # started and crashed, server.log would exist with the error.
+        #
+        # setsid puts the server in its own session so the exec
+        # teardown can't take it down. < /dev/null detaches stdin from
+        # the exec session. Real GitHub runners don't need this, but
+        # it's harmless there, so one version works in both places.
+        #
+        # The sleep + ls + kill -0 block below verifies the process is
+        # actually alive before the health check starts. If it died on
+        # boot, the real startup error prints here instead of showing
+        # up as a vague health check timeout.
+        # ============================================================
         run: |
-          nohup node server.js > server.log 2>&1 &
+          setsid nohup node server.js > server.log 2>&1 < /dev/null &
           echo $! > server.pid
+          sleep 2
+          ls -la server.log server.pid
+          if kill -0 "$(cat server.pid)" 2>/dev/null; then
+            echo "Server process is alive (pid $(cat server.pid))"
+          else
+            echo "Server process is NOT running. Log follows:"
+            cat server.log
+            exit 1
+          fi
 
       - name: Wait for server to become healthy
         if: steps.check_key.outputs.has_key == 'true'
         run: |
           for i in $(seq 1 20); do
+            echo "Health check attempt $i of 20"
             if curl -sf http://127.0.0.1:3001/api/health > /dev/null; then
               echo "Server is up"
               exit 0

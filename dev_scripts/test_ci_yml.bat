@@ -43,7 +43,7 @@ if "%OPENAI_KEY%"=="" (
 
 cd /d "%~dp0.."
 
-call "%~dp0act.bat" push -j eval-harness -W .github/workflows/ci.yml --secret OPENAI_API_KEY=%OPENAI_KEY%
+call "%~dp0act.bat" push -j eval-harness -W .github/workflows/ci.yml --secret "OPENAI_API_KEY=%OPENAI_KEY%"
 
 echo.
 pause

@@ -6,7 +6,8 @@
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+	"prepare": "git config core.hooksPath .githooks || exit 0"
   },
   "keywords": [
     "rag",

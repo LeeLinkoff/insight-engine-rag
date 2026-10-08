@@ -1,0 +1,11 @@
+#!/bin/sh
+
+echo "Validating GitHub Actions workflows with actionlint..."
+
+if ! actionlint; then
+    echo "ERROR: actionlint validation failed. Commit blocked."
+    exit 1
+fi
+
+echo "GitHub Actions validation passed."
+exit 0
