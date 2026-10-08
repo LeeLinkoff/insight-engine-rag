@@ -125,7 +125,9 @@ jobs:
       - name: Add VPS to known_hosts
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+          chmod 700 ~/.ssh
+          printf '%s\n' 'leelinkoff.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMmgtbIMJfypXWC+5vkXeSXhlVKJYACYEXIbfJic9MsY' >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
       - name: Sync source files to VPS
         # Excludes node_modules, dist, and .env — same exclusions called
