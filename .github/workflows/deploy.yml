@@ -106,7 +106,7 @@ jobs:
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
-          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$VPS_SSH_KEY" | tr -d '\r' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
           # shellcheck disable=SC2016
@@ -117,20 +117,28 @@ jobs:
           export SSH_ASKPASS_REQUIRE=force
           export DISPLAY=:0
 
-          setsid ssh-add ~/.ssh/deploy_key < /dev/null
+          setsid -w timeout 30 ssh-add ~/.ssh/deploy_key < /dev/null
+          ssh-add -l
 
           rm -f ~/.ssh/deploy_key
           rm -f /tmp/ssh-askpass.sh
 
+      # Host key read directly from the VPS (/etc/ssh/ssh_host_ed25519_key.pub),
+      # keyed to VPS_HOST so it always matches the address ssh and rsync
+      # actually connect to. BatchMode and ConnectTimeout make every ssh and
+      # rsync call below fail fast with a real error instead of hanging on
+      # a prompt or a dropped connection.
       - name: Add VPS to known_hosts
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          printf '%s\n' 'leelinkoff.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMmgtbIMJfypXWC+5vkXeSXhlVKJYACYEXIbfJic9MsY' >> ~/.ssh/known_hosts
+          printf '%s %s\n' "${{ secrets.VPS_HOST }}" 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMmgtbIMJfypXWC+5vkXeSXhlVKJYACYEXIbfJic9MsY' >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
+          printf '%s\n' 'Host *' '  BatchMode yes' '  ConnectTimeout 15' > ~/.ssh/config
+          chmod 600 ~/.ssh/config
 
       - name: Sync source files to VPS
-        # Excludes node_modules, dist, and .env — same exclusions called
+        # Excludes node_modules, dist, and .env. Same exclusions called
         # out manually in DEPLOYMENT_AND_ARCHITECTURE.md section 1.2.
         # .env is intentionally never overwritten by CI; it's managed by
         # hand on the VPS per section 1.6 (API key rotation).
@@ -177,14 +185,10 @@ jobs:
             echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" > "${{ secrets.VPS_PROJECT_PATH }}/backend/.env"
             echo "PORT=3001" >> "${{ secrets.VPS_PROJECT_PATH }}/backend/.env"
           '
-      - name: Write backend .env from GitHub Secrets
-        run: |
-          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" '
-            set -e
-            echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" > "${{ secrets.VPS_PROJECT_PATH }}/backend/.env"
-            echo "PORT=3001" >> "${{ secrets.VPS_PROJECT_PATH }}/backend/.env"
-          '
 
+      # Published on 127.0.0.1 only. Plain -p 3001:3001 binds every
+      # interface, and Docker's own iptables rules bypass ufw, which would
+      # expose the backend directly on the public IP and skip Apache.
       - name: Rebuild and restart backend container
         run: |
           ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" '
@@ -195,7 +199,7 @@ jobs:
             docker run -d \
               --name rag-backend \
               --restart unless-stopped \
-              -p 3001:3001 \
+              -p 127.0.0.1:3001:3001 \
               --env-file .env \
               rag-backend
           '
@@ -223,13 +227,16 @@ jobs:
               node:20-alpine sh -c "npm install && npm run build"
           '
 
+      # mkdir -p first because rsync only creates the last folder of the
+      # destination, and mvps does not exist on a fresh server.
       - name: Deploy built frontend to Apache static directory
         run: |
           ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" '
             set -e
+            mkdir -p /var/www/leelinkoff.com/public/mvps/rag
             rsync -a --delete \
               "${{ secrets.VPS_PROJECT_PATH }}/frontend/dist/" \
-              /home/leelinko/public_html/mvps/rag/
+              /var/www/leelinkoff.com/public/mvps/rag/
           '
 
       - name: Verify backend health through the public domain
