@@ -14,24 +14,18 @@ This project was built and tested locally first. Getting it running on a VPS req
 
 All commands in this document must be run from an active SSH session on the VPS.
 
-### Option 1: Bluehost cPanel Terminal (no extra software required)
-1. Go to https://my.bluehost.com and log in
-2. Click "Hosting" in the top navigation
-3. Click "cPanel" next to your hosting plan
-4. Scroll down to the "Advanced" section
-5. Click "Terminal"
-6. You are now in an SSH session on the VPS
-
-### Option 2: PuTTY (Windows)
-- Host: YOUR_VPS_IP
-- User: root
+### PuTTY (Windows)
+- Host: 172.239.135.228
+- User: lee
 - Port: 22
+
+Root SSH login is disabled. `lee` has `sudo` and is in the `docker` group.
 
 ### Verify you are in the right place
 
     whoami
 
-Should return: root
+Should return: lee
 
 ---
 
@@ -52,7 +46,7 @@ Do not upload `node_modules/`, `dist/`, or `.env`. These are either built on the
 
 ## 1.3 Pre-Flight: Session Setup
 
-Run these once at the start of every SSH session before doing anything else.
+Run this once at the start of every SSH session before doing anything else.
 
 ### Set your project root
 
@@ -63,14 +57,6 @@ Replace the path with wherever you uploaded the repo on the VPS:
 **Must use `export`.** Plain `PROJECT=/opt/rag` works only in the current shell and breaks subprocesses. `set PROJECT=/opt/rag` is csh/tcsh syntax and does nothing in bash. Commands will fail with silent path errors.
 
 All commands in this document use `$PROJECT` so nothing else needs to change.
-
-### Remove the cp alias
-
-The VPS shell aliases `cp` to `cp -i` by default, which causes interactive prompts on every file overwrite. Kill it for the session:
-
-    unalias cp
-
-To make this permanent, add `unalias cp` to `/root/.bashrc` and run `source /root/.bashrc`.
 
 ---
 
@@ -91,7 +77,8 @@ This writes the production build to `$PROJECT/frontend/dist/` on the VPS filesys
 
 ### Step 2: Deploy to Apache
 
-    cp -rT $PROJECT/frontend/dist /home/leelinko/public_html/mvps/rag
+    mkdir -p /var/www/leelinkoff.com/public/mvps/rag
+    rsync -a --delete $PROJECT/frontend/dist/ /var/www/leelinkoff.com/public/mvps/rag/
 
 Apache serves the UI immediately. No Apache restart required. The proxy configuration is already in place and static file serving is always live.
 
@@ -115,7 +102,7 @@ The UI should load. If it appears blank or broken, check that `vite.config.js` h
     docker run -d \
       --name rag-backend \
       --restart unless-stopped \
-      -p 3001:3001 \
+      -p 127.0.0.1:3001:3001 \
       --env-file .env \
       rag-backend
 
@@ -157,7 +144,7 @@ Update the `OPENAI_API_KEY` line. Save and exit (`Ctrl+O`, `Enter`, `Ctrl+X`).
     docker run -d \
       --name rag-backend \
       --restart unless-stopped \
-      -p 3001:3001 \
+      -p 127.0.0.1:3001:3001 \
       --env-file /opt/rag/backend/.env \
       rag-backend
 
@@ -187,7 +174,7 @@ Without this, all asset paths will be wrong and the app will appear blank or bro
 
 ## 2.1 VPS Environment Reality
 
-The VPS had:
+The original VPS had:
 
 * A broken and extremely old Node environment
 * Missing shared libraries such as `libbrotlidec.so.1`
@@ -201,7 +188,7 @@ Docker becomes mandatory, not optional.
 
 ## 2.2 Frontend Architecture
 
-The frontend is a React/Vite app. It cannot be built on the VPS host because Node is broken there.
+The frontend is a React/Vite app. It is built inside Docker, so the VPS host needs no Node install.
 
 Instead, a throwaway Docker container is used as a build environment. The frontend source directory is mounted into the container as a volume. When `npm run build` writes the `dist/` output, it writes directly to the VPS filesystem through the mount. The container exits and is discarded, but the `dist/` folder remains on disk.
 
@@ -238,7 +225,7 @@ The frontend uses Radix UI primitives (`@radix-ui/react-tabs`, `@radix-ui/react-
 
 ### Apache serves static files from
 
-    /home/leelinko/public_html/mvps/rag/
+    /var/www/leelinkoff.com/public/mvps/rag/
 
 ---
 
@@ -265,7 +252,7 @@ The backend is a Node.js/Express server that runs exclusively inside Docker. The
     OPENAI_API_KEY=...
     PORT=3001
 
-Note: Never commit `.env`. It must be in `.gitignore`. Create it manually on the VPS after uploading source files.
+Note: Never commit `.env`. It must be in `.gitignore`. The deploy pipeline writes it automatically on every deploy from the `OPENAI_API_KEY` GitHub secret (see 1.6).
 
 **Note on the safety/moderation guardrails:** the moderation check run on every generated answer uses OpenAI's moderation endpoint under the same `OPENAI_API_KEY` already configured above. No additional environment variables, credentials, or deployment steps are required to support it.
 
@@ -289,22 +276,22 @@ Two reasons this architecture was chosen:
 
 ### Config file location
 
-    /etc/apache2/conf.d/includes/post_virtualhost_global.conf
+    /etc/apache2/sites-available/leelinkoff.com-le-ssl.conf
 
-Note: This is a cPanel EasyApache (EA4) install. The service and binary are named `httpd` (`/usr/sbin/httpd`, `systemctl status httpd`), but the config tree lives under `/etc/apache2/`, not `/etc/httpd/`. Both are true at once, it's a cPanel packaging convention, not a Debian-vs-RHEL distinction. Verified directly against this server's `apachectl -t -D DUMP_INCLUDES` output.
+The proxy lines go inside the `<VirtualHost *:443>` block, right after `</Directory>`. This is the HTTPS vhost Certbot created. Service name is `apache2` (Ubuntu).
 
 ### Config contents
 
-    <IfModule mod_proxy.c>
-        ProxyPreserveHost On
-        ProxyPass "/api/" "http://127.0.0.1:3001/"
-        ProxyPassReverse "/api/" "http://127.0.0.1:3001/"
-    </IfModule>
+    ProxyPreserveHost On
+    ProxyPass        "/api/" "http://127.0.0.1:3001/api/"
+    ProxyPassReverse "/api/" "http://127.0.0.1:3001/api/"
+
+The `/api/` path is preserved because the backend serves its routes under `/api/` (for example `/api/health`). Requires `mod_proxy` and `mod_proxy_http` (`sudo a2enmod proxy proxy_http`).
 
 ### To apply config changes (only needed if the proxy config itself changes)
 
-    apachectl configtest
-    systemctl restart httpd
+    sudo apache2ctl configtest
+    sudo systemctl reload apache2
 
 ---
 
@@ -336,7 +323,7 @@ This gives:
       |
       |-- /api/*           --->  Docker container (127.0.0.1:3001, internal only)
       |
-      |-- /mvps/rag/*      --->  /home/leelinko/public_html/mvps/rag (static files)
+      |-- /mvps/rag/*      --->  /var/www/leelinkoff.com/public/mvps/rag (static files)
 
 ### Backend
 * Dockerized -- isolated from host OS
@@ -354,7 +341,7 @@ This gives:
 
 * `OPENAI_API_KEY` must stay in `.env` and never be committed to the repository. Always verify `.env` is in `.gitignore` before any `git push`.
 * No rate limiting is currently implemented on `/api/ingest-urls` or `/api/query`. For a public MVP this means anyone who finds the endpoint can run up OpenAI API costs. Add rate limiting before any production hardening.
-* Running as root on the VPS is acceptable for an MVP but should be changed to a dedicated non-root user before any production deployment.
+* Deploy and SSH run as the non-root user `lee`. Root SSH login is disabled. Note that `lee` is in the `docker` group, which is effectively root-equivalent on the host, so the GitHub deploy key carries that level of access.
 * The backend container binds to `127.0.0.1:3001`, not `0.0.0.0:3001`. This means port 3001 is not reachable from the public internet. Only Apache can reach it locally. Do not change this binding.
 
 ---
@@ -423,11 +410,12 @@ GitHub Actions
             │
             ▼
           VPS
-     git pull
-     Build frontend (Docker)
-     Deploy static files
+     Sync source (rsync)
+     Write backend .env from secrets
      Rebuild backend image
      Restart backend container
+     Build frontend (Docker)
+     Deploy static files
             │
             ▼
           Apache

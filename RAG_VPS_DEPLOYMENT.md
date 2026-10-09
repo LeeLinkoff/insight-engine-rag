@@ -8,7 +8,7 @@ This project was built and tested locally first. Getting it running on a VPS req
 
 ## 1. VPS Environment Reality
 
-The VPS had:
+The original VPS had:
 
 * A broken / extremely old Node environment
 * Missing shared libraries such as `libbrotlidec.so.1`
@@ -46,7 +46,7 @@ docker build -t rag-backend .
 docker run -d \
   --name rag-backend \
   --restart unless-stopped \
-  -p 3001:3001 \
+  -p 127.0.0.1:3001:3001 \
   --env-file .env \
   rag-backend
 ```
@@ -74,27 +74,27 @@ Must return JSON, not HTML.
 
 Apache fronts the domain and forwards API requests to the backend container.
 
-### Created
+### Config file
 
 ```
-/etc/apache2/conf.d/includes/post_virtualhost_global.conf
+/etc/apache2/sites-available/leelinkoff.com-le-ssl.conf
 ```
 
-### With
+Inside the `<VirtualHost *:443>` block, right after `</Directory>`.
 
 ```apache
-<IfModule mod_proxy.c>
     ProxyPreserveHost On
-    ProxyPass "/api/" "http://127.0.0.1:3001/"
-    ProxyPassReverse "/api/" "http://127.0.0.1:3001/"
-</IfModule>
+    ProxyPass        "/api/" "http://127.0.0.1:3001/api/"
+    ProxyPassReverse "/api/" "http://127.0.0.1:3001/api/"
 ```
+
+The `/api/` path is preserved because the backend serves its routes under `/api/` (for example `/api/health`). Requires `mod_proxy` and `mod_proxy_http` (`sudo a2enmod proxy proxy_http`).
 
 ### Apply
 
 ```bash
-apachectl configtest
-systemctl restart httpd
+sudo apache2ctl configtest
+sudo systemctl reload apache2
 ```
 
 ### Verification
@@ -107,7 +107,7 @@ Must return backend JSON.
 
 ## 4. Frontend Build Must Use Docker
 
-Frontend cannot be built on the VPS host because Node is unusable.
+Frontend is built inside Docker, so the VPS host needs no Node install.
 
 The frontend `src/` is now a set of focused single-purpose components (`App.jsx` owns shared state and backend calls; `AboutCard.jsx`, `PageUrlCard.jsx`, `RoutingErrorNotice.jsx`, `HighlighterTab.jsx`, `AskQuestionTab.jsx`, `AnswerCard.jsx`, `SourcesCard.jsx`, `HighlightedPreviewCard.jsx`, `SystemCheckDialog.jsx`, `HowItWorksDialog.jsx`, `InstructionSection.jsx`, `InstructionStep.jsx`) rather than one large file, plus new Radix UI dependencies (`@radix-ui/react-tabs`, `@radix-ui/react-dialog`) for the tabs and dialogs. None of this changes the build process below, `npm install` picks up the new dependencies the same as any other package.
 
@@ -138,18 +138,17 @@ This generates:
 Static files live under:
 
 ```
-/home/leelinko/public_html/mvps/rag/
+/var/www/leelinkoff.com/public/mvps/rag/
 ```
 
 ### Deploy
 
 ```bash
-rm -rf /home/leelinko/public_html/mvps/rag/*
-cp -r /opt/rag/frontend/dist/* /home/leelinko/public_html/mvps/rag/
+mkdir -p /var/www/leelinkoff.com/public/mvps/rag
+rsync -a --delete /opt/rag/frontend/dist/ /var/www/leelinkoff.com/public/mvps/rag/
 ```
 
 Apache now serves the UI.
-
 
 ## 6. Continuous Integration & Deployment
 
@@ -174,18 +173,18 @@ GitHub Actions
     ├── Install dependencies
     ├── Verify frontend build
     ├── SSH to VPS
-    ├── Pull latest source
-    ├── Build frontend in Docker
-    ├── Deploy Vite dist/ to Apache
+    ├── Sync source with rsync
+    ├── Write backend .env from secrets
     ├── Rebuild backend Docker image
     ├── Replace running container
+    ├── Build frontend in Docker
+    ├── Deploy Vite dist/ to Apache
     └── Verify deployment
 
 ```
 
 The GitHub Actions runners are used only for validation and deployment orchestration.
 The application itself continues to execute entirely on the VPS.
-
 
 ## 7. API Routing Rule
 
@@ -216,7 +215,7 @@ Apache (HTTPS)
   |
   |-- /api/*  ---> Docker container (127.0.0.1:3001)
   |
-  |-- static frontend ---> /home/leelinko/public_html/mvps/rag
+  |-- static frontend ---> /var/www/leelinkoff.com/public/mvps/rag
 ```
 
 ### Backend
