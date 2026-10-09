@@ -132,6 +132,8 @@ Both of these surfaced during real testing, not code review, and are documented 
 - **CI** (`.github/workflows/ci.yml`): on every push/PR, syntax-checks the JavaScript files, type-checks the TypeScript files under `strict: true`, and runs the eval harness against a live boot of the server (skipped on forked PRs, which never receive the required `OPENAI_API_KEY` secret).
 - **CD** (`.github/workflows/deploy.yml`): on push to `main`, first verifies the frontend actually builds cleanly on GitHub's own runner (fails fast, touches the VPS not at all), then only if that passes, syncs source to the VPS, rebuilds the backend container, rebuilds the frontend inside a throwaway Docker container on the VPS itself, deploys it to Apache, and verifies `/api/health` responds through the public domain. Deployment used to be a fully manual SSH process (still documented in `DEPLOYMENT_AND_ARCHITECTURE.md` for reference); it's automated now.
 
+The move from Bluehost to Linode, and every pipeline failure it surfaced, is documented in `MIGRATION_BLUEHOST_TO_LINODE.md`.
+
 ---
 
 ## Local Development Tooling
